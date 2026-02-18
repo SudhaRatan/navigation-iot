@@ -1,8 +1,8 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
+test.html
 # dependencies
 node_modules/
-
+.env
 # Expo
 .expo/
 dist/
