@@ -2,9 +2,12 @@ import RoutePreview from "@/components/RoutePreview";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { disconnectDevice, requestPermissions, scanDevices } from "@/utils/ble";
+import { getCurrentLocation } from "@/utils/location";
 import * as Location from "expo-location";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, Button } from "react-native";
+import { Device } from "react-native-ble-plx";
 import {
   GooglePlacesAutocomplete,
   GooglePlacesAutocompleteRef,
@@ -26,24 +29,7 @@ export default function Index() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const GoogleRef = useRef<GooglePlacesAutocompleteRef>(null);
   const [showGoogleAutoComplete, setShowGoogleAutoComplete] = useState(false);
-
-  async function getCurrentLocation() {
-    let { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== "granted") {
-      setErrorMsg("Permission to access location was denied");
-      return;
-    }
-
-    let location = await Location.getCurrentPositionAsync({});
-    setLocation(location);
-    await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.Highest, distanceInterval: 0.1 },
-      (newLocation) => {
-        setLocation(newLocation);
-      },
-      console.warn,
-    );
-  }
+  const [device, setDevice] = useState<Device | null>(null);
 
   const enterDestinationPress = () => {
     setShowGoogleAutoComplete(true);
@@ -58,7 +44,10 @@ export default function Index() {
 
   useEffect(() => {
     if (!apiKey) Alert.alert("Error", "Google API key is missing");
-    getCurrentLocation();
+    (async () => {
+      await getCurrentLocation(setLocation, setErrorMsg);
+      await requestPermissions();
+    })();
   }, []);
 
   useEffect(() => {
@@ -78,10 +67,27 @@ export default function Index() {
             longitude: location?.coords.longitude,
           },
           null,
-        )}{" "}
+        )}
+        {"\n\n"}
         ||
-        {JSON.stringify(destination, null)}
+        {JSON.stringify(destination, null)} {"\n\n"} ||
+        {device && JSON.stringify(device, null)}
       </ThemedText>
+      {device ? (
+        <Button
+          title="Disconnect"
+          color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
+          onPress={() => disconnectDevice(device, setDevice)}
+        />
+      ) : (
+        <Button
+          title="Connect"
+          color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
+          onPress={() =>
+            scanDevices().then((device: Device) => setDevice(device))
+          }
+        />
+      )}
       {!showGoogleAutoComplete && (
         <Button
           title="Enter destination"
