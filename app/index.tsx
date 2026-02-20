@@ -35,13 +35,6 @@ export default function Index() {
     setShowGoogleAutoComplete(true);
   };
 
-  const sendNavData = () => {
-    Alert.alert(
-      "Navigation Data Sent",
-      JSON.stringify({ location, destination }),
-    );
-  };
-
   useEffect(() => {
     if (!apiKey) Alert.alert("Error", "Google API key is missing");
     (async () => {
@@ -132,11 +125,7 @@ export default function Index() {
               lat: location!.coords.latitude,
               lon: location!.coords.longitude,
             }}
-          />
-          <Button
-            title="Start"
-            color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
-            onPress={sendNavData}
+            connectedDevice={device}
           />
         </>
       )}

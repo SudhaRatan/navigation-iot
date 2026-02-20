@@ -1,4 +1,5 @@
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { sendRouteToESP, writeStreamPackets } from "@/utils/ble";
 import {
   Camera,
   CircleLayer,
@@ -6,25 +7,30 @@ import {
   MapView,
   ShapeSource,
 } from "@maplibre/maplibre-react-native";
+import { fromByteArray } from "base64-js";
 import React, { useEffect, useState } from "react";
 import {
+  Button,
   GestureResponderEvent,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { Device } from "react-native-ble-plx";
 
 type Props = {
   source: { lat: number; lon: number };
   dest: { lat: number; lon: number };
+  connectedDevice: Device | null;
 };
 
-export default function RoutePreview({ source, dest }: Props) {
+export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   const [routeGeoJSON, setRouteGeoJSON] = useState<any>(null);
   const [selectedRouteId, setSelectedRouteId] = useState<number>(0);
   const [isFollowing, setIsFollowing] = useState<boolean>(true);
   const [recenterCounter, setRecenterCounter] = useState<number>(0);
+  const [secondaryRoadsGeoJSON, setSecondaryRoadsGeoJSON] = useState<any>(null);
   const colorScheme = useColorScheme();
 
   useEffect(() => {
@@ -54,6 +60,10 @@ export default function RoutePreview({ source, dest }: Props) {
       });
 
       setSelectedRouteId(0);
+      const firstRoute = json.routes?.[0]?.geometry?.coordinates;
+      if (firstRoute?.length > 0) {
+        await fetchSecondaryRoads(source.lat, source.lon, firstRoute[0]);
+      }
     }
 
     loadRoute();
@@ -77,6 +87,140 @@ export default function RoutePreview({ source, dest }: Props) {
   function handleCenterPress() {
     setIsFollowing(true);
     setRecenterCounter((c) => c + 1);
+  }
+
+  function getSelectedRouteCoords() {
+    if (!routeGeoJSON) return null;
+
+    const feature = routeGeoJSON.features.find(
+      (f: any) => (f.properties?.id ?? f.id) === selectedRouteId,
+    );
+
+    return feature?.geometry?.coordinates || null; // <-- THIS is routeCoords
+  }
+
+  const start = async () => {
+    if (connectedDevice) {
+      const routeCoords = getSelectedRouteCoords();
+      sendRouteToESP(connectedDevice, routeCoords);
+
+      const roads = getSecondaryRoadCoords();
+      const packedRoads = packSecondaryRoads(roads, source.lat, source.lon);
+      if (packedRoads && connectedDevice) {
+        await writeStreamPackets(connectedDevice, "SEC", packedRoads);
+      }
+    }
+  };
+
+  async function fetchSecondaryRoads(
+    riderLat: number,
+    riderLon: number,
+    target: [number, number],
+  ) {
+    // SAME AS HTML RENDER SCALE
+    const scale = 0.4;
+
+    const metersPerDegLat = 111320;
+    const metersPerDegLon = 111320 * Math.cos((riderLat * Math.PI) / 180);
+
+    // OLED size
+    const SCREEN_W = 128;
+    const SCREEN_H = 64;
+
+    // we want 3x3 screen area
+    const halfW = (SCREEN_W * 3) / 2; // 192
+    const halfH = (SCREEN_H * 3) / 2; // 96
+
+    // convert screen pixels → meters
+    const maxMetersX = halfW / scale;
+    const maxMetersY = halfH / scale;
+
+    // meters → lat/lon delta
+    const lonDelta = maxMetersX / metersPerDegLon;
+    const latDelta = maxMetersY / metersPerDegLat;
+
+    const minLat = riderLat - latDelta;
+    const maxLat = riderLat + latDelta;
+    const minLon = riderLon - lonDelta;
+    const maxLon = riderLon + lonDelta;
+
+    const query = `
+  [out:json];
+  way["highway"]
+  (${minLat},${minLon},${maxLat},${maxLon});
+  out geom;
+  `;
+
+    const res = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      body: query,
+    });
+
+    const data = await res.json();
+
+    const features = data.elements
+      .filter((el: any) => el.geometry)
+      .map((el: any) => ({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: el.geometry.map((p: any) => [p.lon, p.lat]),
+        },
+        properties: {},
+      }));
+
+    setSecondaryRoadsGeoJSON({
+      type: "FeatureCollection",
+      features,
+    });
+  }
+
+  function getSecondaryRoadCoords() {
+    if (!secondaryRoadsGeoJSON) return [];
+
+    return secondaryRoadsGeoJSON.features.map((f: any) => {
+      return f.geometry.coordinates; // [[lon,lat]...]
+    });
+  }
+
+  function packSecondaryRoads(
+    roadsRaw: any[],
+    riderLat: number,
+    riderLon: number,
+  ) {
+    if (!roadsRaw || roadsRaw.length === 0) return null;
+
+    const metersPerDegLat = 111320;
+    const metersPerDegLon = 111320 * Math.cos((riderLat * Math.PI) / 180);
+    const scale = 0.4;
+
+    const arr: number[] = [];
+
+    roadsRaw.forEach((road) => {
+      road.forEach((pt: any, i: number) => {
+        // Safely grab lon/lat whether it's an object or an array
+        const lon = pt.lon !== undefined ? pt.lon : pt[0];
+        const lat = pt.lat !== undefined ? pt.lat : pt[1];
+
+        // If it's STILL failing to find the data, this will stop it from sending 0s
+        if (lon === undefined || lat === undefined) {
+          console.warn("UNDEFINED COORDINATE DATA:", pt);
+          return;
+        }
+
+        let dx = (lon - riderLon) * metersPerDegLon;
+        let dy = (lat - riderLat) * metersPerDegLat;
+
+        let x = Math.max(-128, Math.min(127, dx * scale));
+        let y = Math.max(-128, Math.min(127, -dy * scale));
+
+        arr.push(i === 0 ? 0 : 1); // 0 = moveTo, 1 = lineTo
+        arr.push(Math.round(x) & 0xff);
+        arr.push(Math.round(y) & 0xff);
+      });
+    });
+
+    return fromByteArray(new Uint8Array(arr));
   }
 
   const sourcePointGeoJSON: GeoJSON.FeatureCollection = {
@@ -164,6 +308,11 @@ export default function RoutePreview({ source, dest }: Props) {
       >
         <Text style={styles.centerButtonText}>Center</Text>
       </TouchableOpacity>
+      <Button
+        title="Start"
+        color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
+        onPress={start}
+      />
     </View>
   );
 }

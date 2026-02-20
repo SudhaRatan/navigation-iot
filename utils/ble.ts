@@ -1,8 +1,10 @@
+import { fromByteArray } from "base64-js";
 import * as ExpoDevice from "expo-device";
 import { PermissionsAndroid, Platform } from "react-native";
 import { BleManager, Device } from "react-native-ble-plx";
 
 const SERVICE_UUID = process.env.EXPO_PUBLIC_Service_UUID;
+const CHARACTERISTIC_UUID = process.env.EXPO_PUBLIC_CHARACTERISTIC_UUID;
 
 const requestAndroid31Permissions = async () => {
   const bluetoothScanPermission = await PermissionsAndroid.request(
@@ -117,20 +119,113 @@ async function disconnectDevice(
   if (!device) return;
 
   try {
-    await manager.cancelDeviceConnection(device.id);
-    console.log("DISCONNECTED:", device.id);
-    setDevice(null);
+    const connected = await manager.isDeviceConnected(device.id);
+
+    if (connected) {
+      await manager.cancelDeviceConnection(device.id);
+      console.log("DISCONNECTED:", device.id);
+    }
   } catch (e) {
     console.log("DISCONNECT ERROR:", e);
+  } finally {
+    // always clear local state AFTER ble stack settles
+    setTimeout(() => setDevice(null), 100);
   }
+}
+
+function packRoute(routeCoords: [number, number][]) {
+  if (!routeCoords || routeCoords.length === 0) return null;
+
+  const originLon = routeCoords[0][0];
+  const originLat = routeCoords[0][1];
+
+  const metersPerDegLat = 111320;
+  const metersPerDegLon = 111320 * Math.cos((originLat * Math.PI) / 180);
+
+  const scale = 2; // 1 unit = 0.5m
+
+  const arr = [];
+
+  // header (2 bytes) -> point count
+  const count = routeCoords.length;
+  arr.push(count & 0xff);
+  arr.push((count >> 8) & 0xff);
+
+  routeCoords.forEach((pt) => {
+    const dx = (pt[0] - originLon) * metersPerDegLon;
+    const dy = (pt[1] - originLat) * metersPerDegLat;
+
+    let x = Math.round(dx * scale);
+    let y = Math.round(dy * scale);
+
+    if (x > 127) x = 127;
+    if (x < -128) x = -128;
+    if (y > 127) y = 127;
+    if (y < -128) y = -128;
+
+    arr.push(x & 0xff);
+    arr.push(y & 0xff);
+  });
+
+  return fromByteArray(new Uint8Array(arr));
+}
+
+/* ================= SEND ROUTE ================= */
+
+async function writeStreamPackets(
+  device: Device,
+  prefix: string,
+  base64Data: string,
+) {
+  const CHUNK_SIZE = 160;
+  const encoder = new TextEncoder();
+
+  // START
+  await device.writeCharacteristicWithResponseForService(
+    SERVICE_UUID!,
+    CHARACTERISTIC_UUID!,
+    fromByteArray(encoder.encode(prefix + "_START")),
+  );
+
+  // DATA
+  for (let i = 0; i < base64Data.length; i += CHUNK_SIZE) {
+    const chunk = prefix + "_DATA|" + base64Data.substring(i, i + CHUNK_SIZE);
+
+    await device.writeCharacteristicWithResponseForService(
+      SERVICE_UUID!,
+      CHARACTERISTIC_UUID!,
+      fromByteArray(encoder.encode(chunk)),
+    );
+  }
+
+  // END
+  await device.writeCharacteristicWithResponseForService(
+    SERVICE_UUID!,
+    CHARACTERISTIC_UUID!,
+    fromByteArray(encoder.encode(prefix + "_END")),
+  );
+}
+
+async function sendRouteToESP(
+  connectedDevice: Device,
+  routeCoords: [number, number][],
+) {
+  const payload = packRoute(routeCoords);
+
+  if (!payload || !connectedDevice) return;
+
+  await writeStreamPackets(connectedDevice, "MAP", payload);
 }
 
 export {
   connectToDevice,
   disconnectDevice,
+  packRoute,
   requestAndroid31Permissions,
   requestPermissions,
   scanDevices,
-  stopScan
+  sendRouteToESP,
+  stopScan,
+  writeStreamPackets
 };
 
