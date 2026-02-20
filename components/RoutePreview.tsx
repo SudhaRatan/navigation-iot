@@ -185,38 +185,40 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
   function packSecondaryRoads(
     roadsRaw: any[],
-    riderLat: number,
-    riderLon: number,
+    originLat: number,
+    originLon: number,
   ) {
     if (!roadsRaw || roadsRaw.length === 0) return null;
 
     const metersPerDegLat = 111320;
-    const metersPerDegLon = 111320 * Math.cos((riderLat * Math.PI) / 180);
+    const metersPerDegLon = 111320 * Math.cos((originLat * Math.PI) / 180);
     const scale = 0.4;
 
     const arr: number[] = [];
 
     roadsRaw.forEach((road) => {
       road.forEach((pt: any, i: number) => {
-        // Safely grab lon/lat whether it's an object or an array
         const lon = pt.lon !== undefined ? pt.lon : pt[0];
         const lat = pt.lat !== undefined ? pt.lat : pt[1];
 
-        // If it's STILL failing to find the data, this will stop it from sending 0s
-        if (lon === undefined || lat === undefined) {
-          console.warn("UNDEFINED COORDINATE DATA:", pt);
-          return;
-        }
+        if (lon === undefined || lat === undefined) return;
 
-        let dx = (lon - riderLon) * metersPerDegLon;
-        let dy = (lat - riderLat) * metersPerDegLat;
+        let dx = (lon - originLon) * metersPerDegLon;
+        let dy = (lat - originLat) * metersPerDegLat;
 
-        let x = Math.max(-128, Math.min(127, dx * scale));
-        let y = Math.max(-128, Math.min(127, -dy * scale));
+        // NO CLAMPING: We calculate the true, absolute map coordinates
+        let x = Math.round(dx * scale);
+        let y = Math.round(-dy * scale);
 
         arr.push(i === 0 ? 0 : 1); // 0 = moveTo, 1 = lineTo
-        arr.push(Math.round(x) & 0xff);
-        arr.push(Math.round(y) & 0xff);
+
+        // Push 16-bit X (Little Endian: Least Significant Byte first)
+        arr.push(x & 0xff);
+        arr.push((x >> 8) & 0xff);
+
+        // Push 16-bit Y (Little Endian)
+        arr.push(y & 0xff);
+        arr.push((y >> 8) & 0xff);
       });
     });
 
