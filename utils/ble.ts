@@ -206,6 +206,19 @@ async function writeStreamPackets(
   );
 }
 
+async function writeCoordsPackets(
+  device: Device,
+  latitude: number,
+  longitude: number,
+) {
+  const encoder = new TextEncoder();
+  await device.writeCharacteristicWithResponseForService(
+    SERVICE_UUID!,
+    CHARACTERISTIC_UUID!,
+    fromByteArray(encoder.encode(`POS|${latitude},${longitude}`)),
+  );
+}
+
 async function sendRouteToESP(
   connectedDevice: Device,
   routeCoords: [number, number][],
@@ -226,6 +239,7 @@ export {
   scanDevices,
   sendRouteToESP,
   stopScan,
+  writeCoordsPackets,
   writeStreamPackets
 };
 

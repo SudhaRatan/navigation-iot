@@ -1,5 +1,9 @@
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { sendRouteToESP, writeStreamPackets } from "@/utils/ble";
+import {
+  sendRouteToESP,
+  writeCoordsPackets,
+  writeStreamPackets,
+} from "@/utils/ble";
 import {
   Camera,
   CircleLayer,
@@ -109,6 +113,14 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
       if (packedRoads && connectedDevice) {
         await writeStreamPackets(connectedDevice, "SEC", packedRoads);
       }
+    }
+  };
+
+  const coordsChange = async () => {
+    // write code to change dest lat lon from buttons and then send the changed data using
+    if (connectedDevice) {
+      console.log(source);
+      await writeCoordsPackets(connectedDevice, source.lat, source.lon);
     }
   };
 
@@ -314,6 +326,11 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
         title="Start"
         color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
         onPress={start}
+      />
+      <Button
+        title="Send change"
+        color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
+        onPress={coordsChange}
       />
     </View>
   );
