@@ -329,8 +329,6 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 
       Serial.print("DECODED BYTES: ");
       Serial.println(secBinaryLen);
-
-      // drawSecondaryRoads();
       return;
     }
 
@@ -443,7 +441,7 @@ void loop() {
 
 
   // 2. Draw the frame (Limit to ~30 FPS so we don't choke the I2C bus)
-  if (!receivingSec && secBinaryLen >= 5) {
+  if ((!receivingSec && secBinaryLen >= 5) || (!receivingMap && mapBinaryLen >= 5)) {
     unsigned long currentMillis = millis();
     
     if (currentMillis - lastDrawTime >= 33) {
