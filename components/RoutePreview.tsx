@@ -1,9 +1,5 @@
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import {
-  sendRouteToESP,
-  writeCoordsPackets,
-  writeStreamPackets,
-} from "@/utils/ble";
+import { writeCoordsPackets, writeStreamPackets } from "@/utils/ble";
 import {
   Camera,
   CircleLayer,
@@ -71,7 +67,13 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     }
 
     loadRoute();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dest.lat, dest.lon]);
+
+  useEffect(() => {
+    coordsChange();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source.lat, source.lon]);
 
   function handleSourcePress(e: any) {
     const pressedId =
@@ -93,6 +95,44 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     setRecenterCounter((c) => c + 1);
   }
 
+  function packMainRoute(
+    routeCoords: any[],
+    originLat: number,
+    originLon: number,
+  ) {
+    if (!routeCoords || routeCoords.length === 0) return null;
+
+    const metersPerDegLat = 111320;
+    const metersPerDegLon = 111320 * Math.cos((originLat * Math.PI) / 180);
+    const scale = 0.4; // Must match ESP32 & Secondary Roads
+
+    const arr: number[] = [];
+
+    routeCoords.forEach((pt: any, i: number) => {
+      // OSRM returns coordinates as [lon, lat]
+      const lon = pt[0];
+      const lat = pt[1];
+
+      let dx = (lon - originLon) * metersPerDegLon;
+      let dy = (lat - originLat) * metersPerDegLat;
+
+      let x = Math.round(dx * scale);
+      let y = Math.round(-dy * scale);
+
+      arr.push(i === 0 ? 0 : 1); // 0 = moveTo, 1 = lineTo
+
+      // Push 16-bit X (Little Endian)
+      arr.push(x & 0xff);
+      arr.push((x >> 8) & 0xff);
+
+      // Push 16-bit Y (Little Endian)
+      arr.push(y & 0xff);
+      arr.push((y >> 8) & 0xff);
+    });
+
+    return fromByteArray(new Uint8Array(arr));
+  }
+
   function getSelectedRouteCoords() {
     if (!routeGeoJSON) return null;
 
@@ -105,9 +145,14 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
   const start = async () => {
     if (connectedDevice) {
+      // 1. Pack and send the MAIN route using the 16-bit format
       const routeCoords = getSelectedRouteCoords();
-      sendRouteToESP(connectedDevice, routeCoords);
+      const packedMain = packMainRoute(routeCoords, source.lat, source.lon);
+      if (packedMain) {
+        await writeStreamPackets(connectedDevice, "MAP", packedMain);
+      }
 
+      // 2. Pack and send the SECONDARY roads
       const roads = getSecondaryRoadCoords();
       const packedRoads = packSecondaryRoads(roads, source.lat, source.lon);
       if (packedRoads && connectedDevice) {

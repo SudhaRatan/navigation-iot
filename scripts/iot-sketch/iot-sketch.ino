@@ -4,13 +4,15 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include "mbedtls/base64.h"
-#include "MPU9250.h"
+#include <Adafruit_Sensor.h>
+#include <Adafruit_HMC5883_U.h>
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-MPU9250 mpu;
+#define SDA_PIN 11
+#define SCL_PIN 12
 /*
- Pins on your display:
+ Pins on your display/magnetometer:
  GND  -> GND
  VDD  -> 3V3
  SCK  -> 12 (SCL)
@@ -22,6 +24,7 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(
   U8G2_R2,          // 180° rotation (change to U8G2_R0 if upside down)
   U8X8_PIN_NONE
 );
+Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
 
 String mapBuffer = "";
 String secBuffer = "";
@@ -92,15 +95,15 @@ bool clipLine(int16_t &x0, int16_t &y0, int16_t &x1, int16_t &y1) {
       int outcodeOut = outcode0 ? outcode0 : outcode1;
       int16_t x = 0, y = 0;
 
-      // The ternary operators prevent divide-by-zero crashes
+      // The (int32_t) cast stays *only* here to protect the multiplication
       if (outcodeOut & TOP) {           
-        x = x0 + (x1 - x0) * (0 - y0) / (y1 - y0 != 0 ? y1 - y0 : 1); y = 0;
+        x = x0 + (int32_t)(x1 - x0) * (0 - y0) / (y1 - y0 != 0 ? y1 - y0 : 1); y = 0;
       } else if (outcodeOut & BOTTOM) { 
-        x = x0 + (x1 - x0) * (63 - y0) / (y1 - y0 != 0 ? y1 - y0 : 1); y = 63;
+        x = x0 + (int32_t)(x1 - x0) * (63 - y0) / (y1 - y0 != 0 ? y1 - y0 : 1); y = 63;
       } else if (outcodeOut & RIGHT) {  
-        y = y0 + (y1 - y0) * (127 - x0) / (x1 - x0 != 0 ? x1 - x0 : 1); x = 127;
+        y = y0 + (int32_t)(y1 - y0) * (127 - x0) / (x1 - x0 != 0 ? x1 - x0 : 1); x = 127;
       } else if (outcodeOut & LEFT) {   
-        y = y0 + (y1 - y0) * (0 - x0) / (x1 - x0 != 0 ? x1 - x0 : 1); x = 0;
+        y = y0 + (int32_t)(y1 - y0) * (0 - x0) / (x1 - x0 != 0 ? x1 - x0 : 1); x = 0;
       }
 
       if (outcodeOut == outcode0) {
@@ -111,6 +114,13 @@ bool clipLine(int16_t &x0, int16_t &y0, int16_t &x1, int16_t &y1) {
     }
   }
   return accept;
+}
+
+// THIS FIXES THE THICK LINE OLED WRAP BUG
+void drawSafeLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
+  if (clipLine(x0, y0, x1, y1)) {
+    display.drawLine(x0, y0, x1, y1);
+  }
 }
 
 float heading_degrees = 0.0;
@@ -129,62 +139,99 @@ double originLon = 0.0;
 
 void drawSecondaryRoads() {
   display.clearBuffer();
-  if (secBinaryLen < 5) return;
   const int CENTER_X = 64;
   const int CENTER_Y = 32;
 
   // --- 1. SMOOTH CAMERA PANNING (LERP) ---
-  // Move current position 10% closer to the target every frame
   currentRiderX += (targetRiderX - currentRiderX) * 0.1;
   currentRiderY += (targetRiderY - currentRiderY) * 0.1;
 
-  int16_t prevX = 0;
-  int16_t prevY = 0;
-
-  // Convert dynamic degrees to radians
   float heading_radians = heading_degrees * (PI / 180.0);
   float s = sin(heading_radians);
   float c = cos(heading_radians);
 
-  // Process 5 bytes at a time: [CMD, X_Low, X_High, Y_Low, Y_High]
-  for (int i = 0; i <= secBinaryLen - 5; i += 5) {
-    uint8_t cmd = secBinary[i];
+  // ==========================================
+  // --- SECONDARY ROADS ---
+  // ==========================================
+  if (secBinaryLen >= 5) {
+    int16_t prevX = 0;
+    int16_t prevY = 0;
 
-    // Reconstruct the 16-bit signed integers (Little Endian)
-    int16_t mapX = secBinary[i + 1] | (secBinary[i + 2] << 8);
-    int16_t mapY = secBinary[i + 3] | (secBinary[i + 4] << 8);
+    for (int i = 0; i <= secBinaryLen - 5; i += 5) {
+      uint8_t cmd = secBinary[i];
+      int16_t mapX = secBinary[i + 1] | (secBinary[i + 2] << 8);
+      int16_t mapY = secBinary[i + 3] | (secBinary[i + 4] << 8);
 
-    // --- 2. APPLY CAMERA OFFSET ---
-    // Shift the map in the opposite direction of the rider
-    float relX = mapX - currentRiderX;
-    float relY = mapY - currentRiderY;
+      float relX = mapX - currentRiderX;
+      float relY = mapY - currentRiderY;
 
-    // --- 3. ROTATION ---
-    // Rotate the shifted coordinates around the origin
-    int16_t rotX = round((relX * c) - (relY * s));
-    int16_t rotY = round((relX * s) + (relY * c));
+      int16_t rotX = round((relX * c) - (relY * s));
+      int16_t rotY = round((relX * s) + (relY * c));
 
-    // --- 4. TRANSLATE TO SCREEN CENTER ---
-    int16_t screenX = CENTER_X + rotX;
-    int16_t screenY = CENTER_Y + rotY;
+      int16_t screenX = CENTER_X + rotX;
+      int16_t screenY = CENTER_Y + rotY;
 
-    // --- 5. CLIP AND DRAW ---
-    if (cmd == 1) { 
-      int16_t px = prevX, py = prevY, cx = screenX, cy = screenY;
-      if (clipLine(px, py, cx, cy)) {
-        display.drawLine(px, py, cx, cy);
+      if (cmd == 1) { 
+        drawSafeLine(prevX, prevY, screenX, screenY);
       }
-    }
 
-    prevX = screenX;
-    prevY = screenY;
+      prevX = screenX;
+      prevY = screenY;
+    }
+  }
+
+  // ==========================================
+  // --- MAIN ROUTE (THICK) ---
+  // ==========================================
+  if (mapBinaryLen >= 5) {
+    int16_t prevMapX = 0;
+    int16_t prevMapY = 0;
+
+    for (int i = 0; i <= mapBinaryLen - 5; i += 5) {
+      uint8_t cmd = mapBinary[i];
+      int16_t mapX = mapBinary[i + 1] | (mapBinary[i + 2] << 8);
+      int16_t mapY = mapBinary[i + 3] | (mapBinary[i + 4] << 8);
+
+      float relX = mapX - currentRiderX;
+      float relY = mapY - currentRiderY;
+
+      int16_t rotX = round((relX * c) - (relY * s));
+      int16_t rotY = round((relX * s) + (relY * c));
+
+      int16_t screenX = CENTER_X + rotX;
+      int16_t screenY = CENTER_Y + rotY;
+
+      if (cmd == 1) { 
+        // Pass every single offset through the safe wrapper
+        drawSafeLine(prevMapX, prevMapY, screenX, screenY);           // Center
+        drawSafeLine(prevMapX + 1, prevMapY, screenX + 1, screenY);   // Right
+        drawSafeLine(prevMapX - 1, prevMapY, screenX - 1, screenY);   // Left
+        drawSafeLine(prevMapX, prevMapY + 1, screenX, screenY + 1);   // Down
+        drawSafeLine(prevMapX, prevMapY - 1, screenX, screenY - 1);   // Up
+      }
+      prevMapX = screenX;
+      prevMapY = screenY;
+    }
   }
   
-  // Draw the fixed rider arrow in the center of the OLED
+  // ==========================================
+  // --- RIDER ARROW (WITH MASKING) ---
+  // ==========================================
+  
+  // 1. Change color to BLACK (0) to carve out a border mask
+  display.setDrawColor(0);
   display.drawTriangle(
-    CENTER_X, CENTER_Y-5,
-    CENTER_X-3, CENTER_Y+4,
-    CENTER_X+3, CENTER_Y+4
+    CENTER_X, CENTER_Y - 7,
+    CENTER_X - 5, CENTER_Y + 6,
+    CENTER_X + 5, CENTER_Y + 6
+  );
+
+  // 2. Change color back to WHITE (1) and draw the actual arrow
+  display.setDrawColor(1);
+  display.drawTriangle(
+    CENTER_X, CENTER_Y - 4,
+    CENTER_X - 2, CENTER_Y + 4,
+    CENTER_X + 2, CENTER_Y + 4
   );
   
   display.sendBuffer();
@@ -221,6 +268,21 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       Serial.println(mapBuffer.length());
       Serial.print("\nFull MAP: ");
       Serial.println(mapBuffer);
+
+      size_t outLen = 0;
+
+      mbedtls_base64_decode(
+        mapBinary,
+        sizeof(mapBinary),
+        &outLen,
+        (const unsigned char*)mapBuffer.c_str(),
+        mapBuffer.length()
+      );
+
+      mapBinaryLen = outLen;
+
+      Serial.print("DECODED BYTES: ");
+      Serial.println(mapBinaryLen);
       return;
     }
 
@@ -321,121 +383,11 @@ class MyCallbacks: public BLECharacteristicCallbacks {
   }
 };
 
-/*
-float heading = 0.0f;   // keep for future rotation
-
-void renderMap(){
-  if(secBinaryLen < 2 && mapBinaryLen < 2 ) return;
-  const int CENTER_X = 64;
-  const int CENTER_Y = 32;
-
-  display.clearBuffer();
-
-  float cosA = cos(-heading);
-  float sinA = sin(-heading);
-
-  // =====================================================
-  // 1️⃣ SECONDARY ROADS (NORMAL THIN LINES)
-  // =====================================================
-
-  int idx = 0;
-
-  if(secBinaryLen >= 2){
-
-    int roadCount = secBinary[idx] | (secBinary[idx+1] << 8);
-    idx += 2;
-
-    for(int r=0; r<roadCount; r++){
-
-      if(idx + 1 >= secBinaryLen) break;
-
-      int ptCount = secBinary[idx] | (secBinary[idx+1] << 8);
-      idx += 2;
-
-      bool hasPrev = false;
-      int lastX=0,lastY=0;
-
-      for(int p=0; p<ptCount; p++){
-
-        if(idx + 1 >= secBinaryLen) break;
-
-        int8_t px = (int8_t)secBinary[idx++];
-        int8_t py = (int8_t)secBinary[idx++];
-
-        float rx = px * cosA - py * sinA;
-        float ry = px * sinA + py * cosA;
-
-        int sx = CENTER_X + (int)rx;
-        int sy = CENTER_Y + (int)ry;
-
-        if(hasPrev){
-          display.drawLine(lastX,lastY,sx,sy);
-        }
-
-        lastX = sx;
-        lastY = sy;
-        hasPrev = true;
-      }
-    }
-  }
-
-  // =====================================================
-  // 2️⃣ MAIN ROUTE (THICKER LINE)
-  // =====================================================
-
-  int midx = 0;
-
-  if(mapBinaryLen >= 2){
-
-    int ptCount = mapBinary[midx] | (mapBinary[midx+1] << 8);
-    midx += 2;
-
-    bool hasPrev=false;
-    int lastX=0,lastY=0;
-
-    for(int i=0;i<ptCount;i++){
-
-      if(midx + 1 >= mapBinaryLen) break;
-
-      int8_t px = (int8_t)mapBinary[midx++];
-      int8_t py = (int8_t)mapBinary[midx++];
-
-      float rx = px * cosA - py * sinA;
-      float ry = px * sinA + py * cosA;
-
-      int sx = CENTER_X + (int)rx;
-      int sy = CENTER_Y + (int)ry;
-
-      if(hasPrev){
-
-        // draw thicker main route
-        display.drawLine(lastX,lastY,sx,sy);
-        display.drawLine(lastX+1,lastY,sx+1,sy);
-      }
-
-      lastX = sx;
-      lastY = sy;
-      hasPrev = true;
-    }
-  }
-
-  // =====================================================
-  // 3️⃣ CENTER ARROW
-  // =====================================================
-
-  display.drawTriangle(
-    CENTER_X, CENTER_Y-5,
-    CENTER_X-3, CENTER_Y+4,
-    CENTER_X+3, CENTER_Y+4
-  );
-
-  display.sendBuffer();
-}
-*/
 void setup() {
 
-  Wire.begin(11,12);   // ESP32 I2C pins
-  Wire1.begin(4, 5);
+  Serial.begin(115200);
+  delay(2000);
+  Wire.begin(SDA_PIN, SCL_PIN);   // ESP32 I2C pins
   display.begin();
 
   display.clearBuffer();
@@ -443,16 +395,15 @@ void setup() {
 
   display.drawStr(10, 30, "CONNECT DEVICE");
   display.sendBuffer();
-
-  Serial.begin(115200);
-  
-  delay(5000);
-  MPU9250Setting setting;
-  if (!mpu.setup(0x68)) {  
-      Serial.println("MPU-9250 connection failed! Restarting...");
-      delay(5000);
-      //ESP.restart(); // Auto-reboot if it fails to sync
+  if(!mag.begin())
+  {
+    Serial.println("HMC5883 not detected");
+    while(1);
   }
+
+  Serial.println("HMC5883 detected");
+  
+  delay(1000);
   
   Serial.println("Starting BLE work!");
 
@@ -480,19 +431,16 @@ void setup() {
 }
 
 void loop() {
-  // 1. Update the sensor. This mathematically fuses the 9 axes together.
-  // if(mpu.setup(0x68)){
-  //   Serial.println("setup successful");
-  // }
-  // else{
-  //   Serial.println("fail");
-  // }
-  if (mpu.update()) {
-    // getYaw() returns the tilt-compensated magnetic heading (0 to 360 degrees)
-    // We reverse it (-mpu.getYaw()) because if the bike turns right (positive yaw), 
-    // the map needs to rotate left (negative yaw) to stay North-Up.
-    heading_degrees = -mpu.getYaw(); 
-  }
+  sensors_event_t event;
+  mag.getEvent(&event);
+	float heading = atan2(event.magnetic.y, event.magnetic.x);
+
+	if(heading < 0)
+		heading += 2 * PI;
+
+	float headingDegrees = heading * 180/M_PI;
+  heading_degrees = headingDegrees;
+
 
   // 2. Draw the frame (Limit to ~30 FPS so we don't choke the I2C bus)
   if (!receivingSec && secBinaryLen >= 5) {
@@ -505,21 +453,4 @@ void loop() {
       drawSecondaryRoads();
     }
   }
-  // byte error, address;
-  // int nDevices = 0;
-
-  // for (address = 1; address < 127; address++) {
-  //   Wire1.beginTransmission(address);
-  //   error = Wire1.endTransmission();
-
-  //   if (error == 0) {
-  //     Serial.print("Device found at 0x");
-  //     if (address < 16) Serial.print("0");
-  //     Serial.println(address, HEX);
-  //     nDevices++;
-  //   }
-  // }
-  // if (nDevices == 0) Serial.println("No I2C devices found\n");
-  // else Serial.println("done\n");
-  // delay(1000);
 }
