@@ -6,6 +6,7 @@ import {
   LineLayer,
   MapView,
   ShapeSource,
+  SymbolLayer,
 } from "@maplibre/maplibre-react-native";
 import { fromByteArray } from "base64-js";
 import React, { useEffect, useState } from "react";
@@ -293,6 +294,17 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     ],
   };
 
+  const destPointGeoJSON: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: {},
+        geometry: { type: "Point", coordinates: [dest.lon, dest.lat] },
+      },
+    ],
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.map} onTouchStart={handleMapTouch}>
@@ -331,6 +343,21 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
             />
           </ShapeSource>
 
+          {/* Destination location marker */}
+          <ShapeSource id="destPoint" shape={destPointGeoJSON}>
+            <SymbolLayer
+              id="destSymbol"
+              sourceID="destPoint"
+              style={{
+                iconImage:
+                  "https://maps.gstatic.com/mapfiles/ms2/micons/red-dot.png",
+                iconSize: 0.75,
+                iconAllowOverlap: true,
+                iconIgnorePlacement: true,
+              }}
+            />
+          </ShapeSource>
+
           {routeGeoJSON && (
             <ShapeSource
               id="routeSource"
@@ -356,17 +383,17 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
             </ShapeSource>
           )}
         </MapView>
+        <TouchableOpacity
+          style={[
+            styles.centerButton,
+            { backgroundColor: colorScheme === "dark" ? "#0a84ff" : "#007aff" },
+          ]}
+          onPress={handleCenterPress}
+          accessibilityLabel="Center map on current location"
+        >
+          <Text style={styles.centerButtonText}>Center</Text>
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity
-        style={[
-          styles.centerButton,
-          { backgroundColor: colorScheme === "dark" ? "#0a84ff" : "#007aff" },
-        ]}
-        onPress={handleCenterPress}
-        accessibilityLabel="Center map on current location"
-      >
-        <Text style={styles.centerButtonText}>Center</Text>
-      </TouchableOpacity>
       <Button
         title="Start"
         color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
@@ -386,8 +413,8 @@ const styles = StyleSheet.create({
   map: { flex: 1 },
   centerButton: {
     position: "absolute",
-    right: 16,
-    bottom: 24,
+    right: 10,
+    bottom: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 8,
