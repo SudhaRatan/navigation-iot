@@ -1,17 +1,16 @@
 import RoutePreview from "@/components/RoutePreview";
-import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { disconnectDevice, requestPermissions, scanDevices } from "@/utils/ble";
+import useDeviceStore from "@/stores/deviceStore";
 import { getCurrentLocation } from "@/utils/location";
 import * as Location from "expo-location";
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, Button } from "react-native";
-import { Device } from "react-native-ble-plx";
+import { Alert, Button, Platform } from "react-native";
 import {
   GooglePlacesAutocomplete,
   GooglePlacesAutocompleteRef,
 } from "react-native-google-places-autocomplete";
+import { useShallow } from "zustand/react/shallow";
 
 type Coords = {
   latitude: number;
@@ -29,7 +28,9 @@ export default function Index() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const GoogleRef = useRef<GooglePlacesAutocompleteRef>(null);
   const [showGoogleAutoComplete, setShowGoogleAutoComplete] = useState(false);
-  const [device, setDevice] = useState<Device | null>(null);
+  const [device, setDevice] = useDeviceStore(
+    useShallow((state) => [state.device, state.setDevice]),
+  );
 
   const enterDestinationPress = () => {
     setShowGoogleAutoComplete(true);
@@ -37,10 +38,15 @@ export default function Index() {
 
   useEffect(() => {
     if (!apiKey) Alert.alert("Error", "Google API key is missing");
-    (async () => {
-      await getCurrentLocation(setLocation, setErrorMsg);
-      await requestPermissions();
-    })();
+    let subscription: Location.LocationSubscription | null = null;
+
+    getCurrentLocation(setLocation, setErrorMsg).then((sub) => {
+      if (sub) subscription = sub;
+    });
+
+    return () => {
+      subscription?.remove(); // Clean up on unmount
+    };
   }, []);
 
   useEffect(() => {
@@ -53,7 +59,7 @@ export default function Index() {
 
   return (
     <ThemedView style={{ flex: 1, padding: 10 }}>
-      <ThemedText>
+      {/* <ThemedText>
         {JSON.stringify(
           {
             latitude: location?.coords.latitude,
@@ -65,26 +71,44 @@ export default function Index() {
         ||
         {JSON.stringify(destination, null)} {"\n\n"} ||
         {device && JSON.stringify(device, null)}
-      </ThemedText>
-      {device ? (
+      </ThemedText> */}
+      {/* {device ? (
         <Button
           title="Disconnect"
-          color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
+          color={
+            Platform.OS === "android"
+              ? colorScheme === "dark"
+                ? "#1f1f1f"
+                : "#828282"
+              : undefined
+          }
           onPress={() => disconnectDevice(device, setDevice)}
         />
       ) : (
         <Button
           title="Connect"
-          color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
+          color={
+            Platform.OS === "android"
+              ? colorScheme === "dark"
+                ? "#1f1f1f"
+                : "#828282"
+              : undefined
+          }
           onPress={() =>
             scanDevices().then((device: Device) => setDevice(device))
           }
         />
-      )}
+      )} */}
       {!showGoogleAutoComplete && (
         <Button
           title="Enter destination"
-          color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
+          color={
+            Platform.OS === "android"
+              ? colorScheme === "dark"
+                ? "#1f1f1f"
+                : "#828282"
+              : undefined
+          }
           onPress={enterDestinationPress}
         />
       )}
