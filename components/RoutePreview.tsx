@@ -14,11 +14,12 @@ import {
   Button,
   GestureResponderEvent,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from "react-native";
 import { Device } from "react-native-ble-plx";
+import { ThemedView } from "./themed-view";
+import { IconSymbol } from "./ui/icon-symbol.ios";
 
 type Props = {
   source: { lat: number; lon: number };
@@ -34,39 +35,39 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   const [secondaryRoadsGeoJSON, setSecondaryRoadsGeoJSON] = useState<any>(null);
   const colorScheme = useColorScheme();
 
-  useEffect(() => {
-    async function loadRoute() {
-      const res = await fetch(
-        `https://router.project-osrm.org/route/v1/driving/${source.lon},${source.lat};${dest.lon},${dest.lat}?overview=full&geometries=geojson&alternatives=true`,
-      );
+  async function loadRoute() {
+    const res = await fetch(
+      `https://router.project-osrm.org/route/v1/driving/${source.lon},${source.lat};${dest.lon},${dest.lat}?overview=full&geometries=geojson&alternatives=true`,
+    );
 
-      const json = await res.json();
+    const json = await res.json();
 
-      const features = json.routes.map((route: any, index: number) => ({
-        type: "Feature",
-        geometry: {
-          type: "LineString",
-          coordinates: route.geometry.coordinates,
-        },
-        properties: {
-          id: index,
-          distance: route.distance,
-          duration: route.duration,
-        },
-      }));
+    const features = json.routes.map((route: any, index: number) => ({
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates: route.geometry.coordinates,
+      },
+      properties: {
+        id: index,
+        distance: route.distance,
+        duration: route.duration,
+      },
+    }));
 
-      setRouteGeoJSON({
-        type: "FeatureCollection",
-        features,
-      });
+    setRouteGeoJSON({
+      type: "FeatureCollection",
+      features,
+    });
 
-      setSelectedRouteId(0);
-      const firstRoute = json.routes?.[0]?.geometry?.coordinates;
-      if (firstRoute?.length > 0) {
-        await fetchSecondaryRoads(source.lat, source.lon, firstRoute[0]);
-      }
+    setSelectedRouteId(0);
+    const firstRoute = json.routes?.[0]?.geometry?.coordinates;
+    if (firstRoute?.length > 0) {
+      await fetchSecondaryRoads(source.lat, source.lon, firstRoute[0]);
     }
+  }
 
+  useEffect(() => {
     loadRoute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dest.lat, dest.lon]);
@@ -209,28 +210,36 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   out geom;
   `;
 
-    const res = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      body: query,
-    });
+    try {
+      console.log("Fetching secondary roads");
+      const res = await fetch("https://overpass-api.de/api/interpreter", {
+        method: "POST",
+        body: query,
+      });
 
-    const data = await res.json();
+      const data = await res.json();
 
-    const features = data.elements
-      .filter((el: any) => el.geometry)
-      .map((el: any) => ({
-        type: "Feature",
-        geometry: {
-          type: "LineString",
-          coordinates: el.geometry.map((p: any) => [p.lon, p.lat]),
-        },
-        properties: {},
-      }));
+      const features = data.elements
+        .filter((el: any) => el.geometry)
+        .map((el: any) => ({
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: el.geometry.map((p: any) => [p.lon, p.lat]),
+          },
+          properties: {},
+        }));
 
-    setSecondaryRoadsGeoJSON({
-      type: "FeatureCollection",
-      features,
-    });
+      setSecondaryRoadsGeoJSON({
+        type: "FeatureCollection",
+        features,
+      });
+      console.log("Fetched secondary roads:", features.length);
+    } catch (error) {
+      console.log("Error fetching secondary roads:", error);
+      console.log("Retrying...");
+      fetchSecondaryRoads(riderLat, riderLon, target);
+    }
   }
 
   function getSecondaryRoadCoords() {
@@ -306,7 +315,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <ThemedView style={styles.container}>
       <View style={styles.map} onTouchStart={handleMapTouch}>
         <MapView
           style={styles.map}
@@ -384,14 +393,15 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           )}
         </MapView>
         <TouchableOpacity
+          activeOpacity={0.9}
           style={[
             styles.centerButton,
-            { backgroundColor: colorScheme === "dark" ? "#0a84ff" : "#007aff" },
+            { backgroundColor: colorScheme === "dark" ? "#1f1f1f" : "#007aff" },
           ]}
           onPress={handleCenterPress}
           accessibilityLabel="Center map on current location"
         >
-          <Text style={styles.centerButtonText}>Center</Text>
+          <IconSymbol color="" size={24} name="location" />
         </TouchableOpacity>
       </View>
       <Button
@@ -404,13 +414,13 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
         color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
         onPress={coordsChange}
       />
-    </View>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  map: { flex: 1 },
+  map: { flex: 1, borderRadius: 16, overflow: "hidden" },
   centerButton: {
     position: "absolute",
     right: 10,

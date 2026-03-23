@@ -1,13 +1,14 @@
+import { ThemedText } from "@/components/themed-text";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import useDeviceStore from "@/stores/deviceStore";
-import { scanDevices } from "@/utils/ble";
+import { disconnectDevice, scanDevices } from "@/utils/ble";
 import {
   DarkTheme,
   DefaultTheme,
   ThemeProvider,
 } from "@react-navigation/native";
-import { Stack } from "expo-router";
+import { router, Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { TouchableOpacity } from "react-native";
 import { Device } from "react-native-ble-plx";
@@ -33,7 +34,11 @@ export default function RootLayout() {
               return (
                 <TouchableOpacity
                   onPress={() => {
-                    scanDevices().then((device: Device) => setDevice(device));
+                    if (device) {
+                      disconnectDevice(device, setDevice);
+                    } else {
+                      scanDevices().then((device: Device) => setDevice(device));
+                    }
                   }}
                 >
                   {!device ? (
@@ -45,6 +50,25 @@ export default function RootLayout() {
                   ) : (
                     <IconSymbol size={22} name="link" color={"green"} />
                   )}
+                </TouchableOpacity>
+              );
+            },
+          }}
+        />
+        <Stack.Screen
+          name="destination"
+          options={{
+            headerShown: true,
+            headerTitle: "Enter destination",
+            presentation: "modal",
+            headerLeft: () => {
+              return (
+                <TouchableOpacity
+                  onPress={() => {
+                    router.back();
+                  }}
+                >
+                  <ThemedText style={{ color: "#007AFF" }}>Cancel</ThemedText>
                 </TouchableOpacity>
               );
             },

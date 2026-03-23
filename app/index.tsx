@@ -2,42 +2,34 @@ import RoutePreview from "@/components/RoutePreview";
 import { ThemedView } from "@/components/themed-view";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import useDeviceStore from "@/stores/deviceStore";
+import useLocationStore from "@/stores/locationStore";
 import { getCurrentLocation } from "@/utils/location";
 import * as Location from "expo-location";
-import React, { useEffect, useRef, useState } from "react";
-import { Alert, Button, Platform } from "react-native";
-import {
-  GooglePlacesAutocomplete,
-  GooglePlacesAutocompleteRef,
-} from "react-native-google-places-autocomplete";
+import { router } from "expo-router";
+import React, { useEffect, useState } from "react";
+import { Button, Platform } from "react-native";
 import { useShallow } from "zustand/react/shallow";
-
-type Coords = {
-  latitude: number;
-  longitude: number;
-};
-
-const apiKey = process.env.EXPO_PUBLIC_GOOGLE_API_KEY;
 
 export default function Index() {
   const colorScheme = useColorScheme();
   const [location, setLocation] = useState<Location.LocationObject | null>(
     null,
   );
-  const [destination, setDestination] = useState<Coords | null>(null);
+  const [destination, setDestination] = useLocationStore(
+    useShallow((state) => [state.destination, state.setDestination]),
+  );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const GoogleRef = useRef<GooglePlacesAutocompleteRef>(null);
   const [showGoogleAutoComplete, setShowGoogleAutoComplete] = useState(false);
   const [device, setDevice] = useDeviceStore(
     useShallow((state) => [state.device, state.setDevice]),
   );
 
   const enterDestinationPress = () => {
-    setShowGoogleAutoComplete(true);
+    // setShowGoogleAutoComplete(true);
+    router.navigate("/destination");
   };
 
   useEffect(() => {
-    if (!apiKey) Alert.alert("Error", "Google API key is missing");
     let subscription: Location.LocationSubscription | null = null;
 
     getCurrentLocation(setLocation, setErrorMsg).then((sub) => {
@@ -48,14 +40,6 @@ export default function Index() {
       subscription?.remove(); // Clean up on unmount
     };
   }, []);
-
-  useEffect(() => {
-    if (showGoogleAutoComplete) {
-      setTimeout(() => {
-        GoogleRef.current?.focus();
-      }, 100);
-    }
-  }, [showGoogleAutoComplete]);
 
   return (
     <ThemedView style={{ flex: 1, padding: 10 }}>
@@ -99,20 +83,30 @@ export default function Index() {
           }
         />
       )} */}
-      {!showGoogleAutoComplete && (
-        <Button
-          title="Enter destination"
-          color={
-            Platform.OS === "android"
-              ? colorScheme === "dark"
-                ? "#1f1f1f"
-                : "#828282"
-              : undefined
-          }
-          onPress={enterDestinationPress}
-        />
+      {destination && location && !showGoogleAutoComplete && (
+        <>
+          <RoutePreview
+            dest={{ lat: destination!.latitude, lon: destination!.longitude }}
+            source={{
+              lat: location!.coords.latitude,
+              lon: location!.coords.longitude,
+            }}
+            connectedDevice={device}
+          />
+        </>
       )}
-      {showGoogleAutoComplete && (
+      <Button
+        title="Enter destination"
+        color={
+          Platform.OS === "android"
+            ? colorScheme === "dark"
+              ? "#1f1f1f"
+              : "#828282"
+            : undefined
+        }
+        onPress={enterDestinationPress}
+      />
+      {/* {showGoogleAutoComplete && (
         <GooglePlacesAutocomplete
           ref={GoogleRef}
           placeholder="Enter destination"
@@ -140,19 +134,7 @@ export default function Index() {
             container: { flex: 1 },
           }}
         />
-      )}
-      {destination && location && !showGoogleAutoComplete && (
-        <>
-          <RoutePreview
-            dest={{ lat: destination!.latitude, lon: destination!.longitude }}
-            source={{
-              lat: location!.coords.latitude,
-              lon: location!.coords.longitude,
-            }}
-            connectedDevice={device}
-          />
-        </>
-      )}
+      )} */}
     </ThemedView>
   );
 }

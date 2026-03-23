@@ -1,21 +1,17 @@
-import { Device } from "react-native-ble-plx";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 type LocationStore = {
-  location: Device | null;
-  setLocation: (location: Device | null) => void;
+  destination: Coords | null;
+  setDestination: (location: Coords | null) => void;
 };
 
-const useLocationStore = create(
-  persist<LocationStore>(
-    (set, get) => ({
-      location: null,
-      setLocation: (location) => set({ location: location }),
-    }),
-    {
-      name: "location-storage",
-    },
-  ),
-);
+type Coords = {
+  latitude: number;
+  longitude: number;
+};
+
+const useLocationStore = create<LocationStore>((set, get) => ({
+  destination: null,
+  setDestination: (destination) => set({ destination }),
+}));
 export default useLocationStore;
