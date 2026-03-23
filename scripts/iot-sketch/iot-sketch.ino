@@ -146,7 +146,7 @@ void drawSecondaryRoads() {
   currentRiderX += (targetRiderX - currentRiderX) * 0.1;
   currentRiderY += (targetRiderY - currentRiderY) * 0.1;
 
-  float heading_radians = heading_degrees * (PI / 180.0);
+  float heading_radians = -heading_degrees * (PI / 180.0);
   float s = sin(heading_radians);
   float c = cos(heading_radians);
 
@@ -386,6 +386,7 @@ void setup() {
   Serial.begin(115200);
   delay(2000);
   Wire.begin(SDA_PIN, SCL_PIN);   // ESP32 I2C pins
+  Wire.setClock(400000);  // 400kHz Fast Mode (default is 100kHz)
   display.begin();
 
   display.clearBuffer();
@@ -440,6 +441,7 @@ void loop() {
   heading_degrees = headingDegrees;
 
 
+
   // 2. Draw the frame (Limit to ~30 FPS so we don't choke the I2C bus)
   if ((!receivingSec && secBinaryLen >= 5) || (!receivingMap && mapBinaryLen >= 5)) {
     unsigned long currentMillis = millis();
@@ -449,6 +451,7 @@ void loop() {
       
       // Trigger the OLED render frame with the new heading_degrees
       drawSecondaryRoads();
+      Serial.println(heading_degrees);
     }
   }
 }
