@@ -359,9 +359,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
               : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
           }
         >
-          {/* Camera will recenter only when `isFollowing` is true.
-            Toggling `recenterCounter` as the key forces the Camera to remount
-            and animate to the source when user presses the center button. */}
+          {/* Camera will recenter only when `isFollowing` is true. */}
           <Camera
             animationMode="easeTo"
             animationDuration={500}

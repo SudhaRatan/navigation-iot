@@ -1,11 +1,17 @@
 import RoutePreview from "@/components/RoutePreview";
+import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
+import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import useDeviceStore from "@/stores/deviceStore";
 import useLocationStore from "@/stores/locationStore";
+import { disconnectDevice, scanDevices } from "@/utils/ble";
 import { getCurrentLocation } from "@/utils/location";
+import Constants from "expo-constants";
 import * as Location from "expo-location";
 import React, { useEffect, useState } from "react";
+import { TouchableOpacity } from "react-native";
+import { Device } from "react-native-ble-plx";
 import { useShallow } from "zustand/react/shallow";
 
 export default function Index() {
@@ -21,6 +27,7 @@ export default function Index() {
   const [device, setDevice] = useDeviceStore(
     useShallow((state) => [state.device, state.setDevice]),
   );
+  const height = Constants.statusBarHeight || 0;
 
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;
@@ -35,7 +42,40 @@ export default function Index() {
   }, []);
 
   return (
-    <ThemedView style={{ flex: 1, padding: 10 }}>
+    <ThemedView style={{ flex: 1 }}>
+      <TouchableOpacity
+        style={{
+          margin: 10,
+          position: "absolute",
+          right: 0,
+          top: height,
+          zIndex: 1,
+          flex: 1,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 10,
+          backgroundColor: colorScheme === "dark" ? "#1f1f1f" : "#e0e0e0",
+          paddingVertical: 4,
+          paddingHorizontal: 12,
+          borderRadius: 100,
+          borderWidth: 1,
+          borderColor: colorScheme === "dark" ? "#333" : "#c0c0c0",
+        }}
+        onPress={() => {
+          if (device) {
+            disconnectDevice(device, setDevice);
+          } else {
+            scanDevices().then((device: Device) => setDevice(device));
+          }
+        }}
+      >
+        <IconSymbol
+          color={device ? "green" : "crimson"}
+          name="circle.fill"
+          size={12}
+        />
+        <ThemedText>{device ? "Connected" : "No connection"}</ThemedText>
+      </TouchableOpacity>
       {/* <ThemedText>
         {JSON.stringify(
           {
