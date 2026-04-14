@@ -47,7 +47,7 @@ export default function Index() {
         style={{
           margin: 10,
           position: "absolute",
-          right: 0,
+          left: 0,
           top: height,
           zIndex: 1,
           flex: 1,
