@@ -1,4 +1,5 @@
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { Coords } from "@/stores/locationStore";
 import { writeCoordsPackets, writeStreamPackets } from "@/utils/ble";
 import {
   Camera,
@@ -9,11 +10,14 @@ import {
   SymbolLayer,
 } from "@maplibre/maplibre-react-native";
 import { fromByteArray } from "base64-js";
+import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
-  Button,
+  ColorSchemeName,
   GestureResponderEvent,
   StyleSheet,
+  Text,
+  TouchableHighlight,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -22,8 +26,8 @@ import { ThemedView } from "./themed-view";
 import { IconSymbol } from "./ui/icon-symbol.ios";
 
 type Props = {
-  source: { lat: number; lon: number };
-  dest: { lat: number; lon: number };
+  source: Coords;
+  dest: Coords;
   connectedDevice: Device | null;
 };
 
@@ -34,10 +38,11 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   const [recenterCounter, setRecenterCounter] = useState<number>(0);
   const [secondaryRoadsGeoJSON, setSecondaryRoadsGeoJSON] = useState<any>(null);
   const colorScheme = useColorScheme();
+  const style = styles({ colorScheme });
 
   async function loadRoute() {
     const res = await fetch(
-      `https://router.project-osrm.org/route/v1/driving/${source.lon},${source.lat};${dest.lon},${dest.lat}?overview=full&geometries=geojson&alternatives=true`,
+      `https://router.project-osrm.org/route/v1/driving/${source.longitude},${source.latitude};${dest.longitude},${dest.latitude}?overview=full&geometries=geojson&alternatives=true`,
     );
 
     const json = await res.json();
@@ -62,20 +67,24 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
     setSelectedRouteId(0);
     const firstRoute = json.routes?.[0]?.geometry?.coordinates;
-    if (firstRoute?.length > 0) {
-      await fetchSecondaryRoads(source.lat, source.lon, firstRoute[0]);
+    if (firstRoute?.length > 0 && source.latitude && source.longitude) {
+      await fetchSecondaryRoads(
+        source.latitude,
+        source.longitude,
+        firstRoute[0],
+      );
     }
   }
 
   useEffect(() => {
-    loadRoute();
+    if (dest.latitude && dest.longitude) loadRoute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dest.lat, dest.lon]);
+  }, [dest.latitude, dest.longitude]);
 
   useEffect(() => {
-    coordsChange();
+    if (connectedDevice && source.latitude && source.longitude) coordsChange();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source.lat, source.lon]);
+  }, [source.latitude, source.longitude]);
 
   function handleSourcePress(e: any) {
     const pressedId =
@@ -93,9 +102,16 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   }
 
   function handleCenterPress() {
-    setIsFollowing(true);
-    setRecenterCounter((c) => c + 1);
+    if (source.latitude && source.longitude) {
+      setIsFollowing(true);
+      setRecenterCounter((c) => c + 1);
+    }
   }
+
+  const enterDestinationPress = () => {
+    // setShowGoogleAutoComplete(true);
+    router.navigate("/destination");
+  };
 
   function packMainRoute(
     routeCoords: any[],
@@ -146,17 +162,25 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   }
 
   const start = async () => {
-    if (connectedDevice) {
+    if (connectedDevice && source.latitude && source.longitude) {
       // 1. Pack and send the MAIN route using the 16-bit format
       const routeCoords = getSelectedRouteCoords();
-      const packedMain = packMainRoute(routeCoords, source.lat, source.lon);
+      const packedMain = packMainRoute(
+        routeCoords,
+        source.latitude,
+        source.longitude,
+      );
       if (packedMain) {
         await writeStreamPackets(connectedDevice, "MAP", packedMain);
       }
 
       // 2. Pack and send the SECONDARY roads
       const roads = getSecondaryRoadCoords();
-      const packedRoads = packSecondaryRoads(roads, source.lat, source.lon);
+      const packedRoads = packSecondaryRoads(
+        roads,
+        source.latitude,
+        source.longitude,
+      );
       if (packedRoads && connectedDevice) {
         await writeStreamPackets(connectedDevice, "SEC", packedRoads);
       }
@@ -165,9 +189,13 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
   const coordsChange = async () => {
     // write code to change dest lat lon from buttons and then send the changed data using
-    if (connectedDevice) {
+    if (connectedDevice && source.latitude && source.longitude) {
       console.log(source);
-      await writeCoordsPackets(connectedDevice, source.lat, source.lon);
+      await writeCoordsPackets(
+        connectedDevice,
+        source.latitude,
+        source.longitude,
+      );
     }
   };
 
@@ -298,7 +326,10 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
       {
         type: "Feature",
         properties: {},
-        geometry: { type: "Point", coordinates: [source.lon, source.lat] },
+        geometry: {
+          type: "Point",
+          coordinates: [source.longitude as number, source.latitude as number],
+        },
       },
     ],
   };
@@ -309,16 +340,19 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
       {
         type: "Feature",
         properties: {},
-        geometry: { type: "Point", coordinates: [dest.lon, dest.lat] },
+        geometry: {
+          type: "Point",
+          coordinates: [dest.longitude as number, dest.latitude as number],
+        },
       },
     ],
   };
 
   return (
-    <ThemedView style={styles.container}>
-      <View style={styles.map} onTouchStart={handleMapTouch}>
+    <ThemedView style={style.container}>
+      <View style={style.map} onTouchStart={handleMapTouch}>
         <MapView
-          style={styles.map}
+          style={style.map}
           mapStyle={
             colorScheme === "dark"
               ? "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
@@ -329,12 +363,13 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
             Toggling `recenterCounter` as the key forces the Camera to remount
             and animate to the source when user presses the center button. */}
           <Camera
-            key={recenterCounter}
             animationMode="easeTo"
             animationDuration={500}
             zoomLevel={15}
-            {...(isFollowing
-              ? { centerCoordinate: [source.lon, source.lat] }
+            {...(isFollowing && source.latitude && source.longitude
+              ? {
+                  centerCoordinate: [source.longitude, source.latitude],
+                }
               : {})}
           />
 
@@ -367,44 +402,82 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
             />
           </ShapeSource>
 
-          {routeGeoJSON && (
-            <ShapeSource
-              id="routeSource"
-              shape={routeGeoJSON}
-              onPress={handleSourcePress}
-            >
-              {routeGeoJSON.features.map((feature: any) => {
-                const fid = feature.properties?.id ?? feature.id;
-                const color = fid === selectedRouteId ? "#00aFFF" : "#999999";
-                return (
-                  <LineLayer
-                    key={fid}
-                    id={`routeLine-${fid}`}
-                    sourceID="routeSource"
-                    filter={["==", ["get", "id"], fid]}
-                    style={{
-                      lineColor: color,
-                      lineWidth: 4,
-                    }}
-                  />
-                );
-              })}
-            </ShapeSource>
-          )}
+          {routeGeoJSON &&
+            (() => {
+              const unselectedFeatures = routeGeoJSON.features.filter(
+                (f: any) => (f.properties?.id ?? f.id) !== selectedRouteId,
+              );
+              const selectedFeature = routeGeoJSON.features.find(
+                (f: any) => (f.properties?.id ?? f.id) === selectedRouteId,
+              );
+              const allFeatures = [
+                ...unselectedFeatures,
+                ...(selectedFeature ? [selectedFeature] : []),
+              ];
+              console.log("Rendering routes: :", allFeatures.length);
+              return (
+                <ShapeSource
+                  id="routeSource"
+                  shape={routeGeoJSON}
+                  onPress={handleSourcePress}
+                >
+                  {allFeatures.map((feature: any) => {
+                    const fid = feature.properties?.id ?? feature.id;
+                    const color =
+                      fid === selectedRouteId ? "#00aFFF" : "#999999";
+                    const width = fid === selectedRouteId ? 5 : 3;
+                    return (
+                      <LineLayer
+                        key={(fid + 1) * Math.random()}
+                        id={`routeLine-${fid}`}
+                        sourceID="routeSource"
+                        filter={["==", ["get", "id"], fid]}
+                        style={{
+                          lineColor: color,
+                          lineWidth: width,
+                        }}
+                      />
+                    );
+                  })}
+                </ShapeSource>
+              );
+            })()}
         </MapView>
-        <TouchableOpacity
-          activeOpacity={0.9}
-          style={[
-            styles.centerButton,
-            { backgroundColor: colorScheme === "dark" ? "#1f1f1f" : "#007aff" },
-          ]}
-          onPress={handleCenterPress}
-          accessibilityLabel="Center map on current location"
-        >
-          <IconSymbol color="" size={24} name="location" />
-        </TouchableOpacity>
+        <View style={style.actionContainer}>
+          <TouchableOpacity
+            activeOpacity={0.9}
+            style={[
+              style.centerButton,
+              {
+                backgroundColor: colorScheme === "dark" ? "#1f1f1f" : "#e1e1e1",
+              },
+            ]}
+            onPress={handleCenterPress}
+            accessibilityLabel="Center map on current location"
+          >
+            <IconSymbol color="#007aff" size={24} name="location" />
+          </TouchableOpacity>
+          <TouchableHighlight
+            style={style.destinationBtn}
+            onPress={enterDestinationPress}
+            underlayColor={colorScheme === "dark" ? "#1e1e1e" : "#e2e2e2"}
+          >
+            <View
+              style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+            >
+              <IconSymbol color="#007aff" size={22} name="magnifyingglass" />
+              <Text
+                style={{
+                  color: colorScheme === "dark" ? "#818181" : "#818181",
+                }}
+              >
+                Enter destination
+              </Text>
+            </View>
+          </TouchableHighlight>
+        </View>
       </View>
-      <Button
+      {/* <Button
         title="Start"
         color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
         onPress={start}
@@ -413,25 +486,44 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
         title="Send change"
         color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
         onPress={coordsChange}
-      />
+      /> */}
     </ThemedView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  map: { flex: 1, borderRadius: 16, overflow: "hidden" },
-  centerButton: {
-    position: "absolute",
-    right: 10,
-    bottom: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 8,
-    elevation: 4,
-  },
-  centerButtonText: {
-    color: "white",
-    fontWeight: "600",
-  },
-});
+const styles = ({ colorScheme }: { colorScheme: ColorSchemeName }) =>
+  StyleSheet.create({
+    container: { flex: 1 },
+    map: { flex: 1, borderRadius: 16, overflow: "hidden" },
+    centerButton: {
+      borderRadius: 8,
+      elevation: 4,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    centerButtonText: {
+      color: "white",
+      fontWeight: "600",
+    },
+    actionContainer: {
+      position: "absolute",
+      bottom: 10,
+      justifyContent: "center",
+      alignItems: "flex-end",
+      gap: 10,
+      width: "100%",
+      paddingHorizontal: 8,
+      paddingBottom: 10,
+    },
+    destinationBtn: {
+      backgroundColor: colorScheme === "dark" ? "#1f1f1f" : "#e1e1e1",
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      borderRadius: 8,
+      flex: 1,
+      width: "100%",
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: colorScheme === "dark" ? "#1a1a1a" : "#c1c1c1",
+    },
+  });

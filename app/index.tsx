@@ -5,9 +5,7 @@ import useDeviceStore from "@/stores/deviceStore";
 import useLocationStore from "@/stores/locationStore";
 import { getCurrentLocation } from "@/utils/location";
 import * as Location from "expo-location";
-import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Button, Platform } from "react-native";
 import { useShallow } from "zustand/react/shallow";
 
 export default function Index() {
@@ -23,11 +21,6 @@ export default function Index() {
   const [device, setDevice] = useDeviceStore(
     useShallow((state) => [state.device, state.setDevice]),
   );
-
-  const enterDestinationPress = () => {
-    // setShowGoogleAutoComplete(true);
-    router.navigate("/destination");
-  };
 
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;
@@ -86,26 +79,18 @@ export default function Index() {
       {destination && location && !showGoogleAutoComplete && (
         <>
           <RoutePreview
-            dest={{ lat: destination!.latitude, lon: destination!.longitude }}
+            dest={{
+              latitude: destination!.latitude,
+              longitude: destination!.longitude,
+            }}
             source={{
-              lat: location!.coords.latitude,
-              lon: location!.coords.longitude,
+              latitude: location?.coords?.latitude as number,
+              longitude: location?.coords?.longitude as number,
             }}
             connectedDevice={device}
           />
         </>
       )}
-      <Button
-        title="Enter destination"
-        color={
-          Platform.OS === "android"
-            ? colorScheme === "dark"
-              ? "#1f1f1f"
-              : "#828282"
-            : undefined
-        }
-        onPress={enterDestinationPress}
-      />
       {/* {showGoogleAutoComplete && (
         <GooglePlacesAutocomplete
           ref={GoogleRef}

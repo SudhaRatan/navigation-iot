@@ -58,7 +58,7 @@ export default function RootLayout() {
         <Stack.Screen
           name="destination"
           options={{
-            headerShown: true,
+            headerShown: false,
             headerTitle: "Enter destination",
             presentation: "modal",
             headerLeft: () => {
