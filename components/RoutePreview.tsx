@@ -76,16 +76,6 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     }
   }
 
-  useEffect(() => {
-    if (dest.latitude && dest.longitude) loadRoute();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dest.latitude, dest.longitude]);
-
-  useEffect(() => {
-    if (connectedDevice && source.latitude && source.longitude) coordsChange();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source.latitude, source.longitude]);
-
   function handleSourcePress(e: any) {
     const pressedId =
       e?.features?.[0]?.properties?.id ??
@@ -158,7 +148,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
       (f: any) => (f.properties?.id ?? f.id) === selectedRouteId,
     );
 
-    return feature?.geometry?.coordinates || null; // <-- THIS is routeCoords
+    return feature?.geometry?.coordinates || null;
   }
 
   const start = async () => {
@@ -320,6 +310,16 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     return fromByteArray(new Uint8Array(arr));
   }
 
+  useEffect(() => {
+    if (dest.latitude && dest.longitude) loadRoute();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dest.latitude, dest.longitude]);
+
+  useEffect(() => {
+    if (connectedDevice && source.latitude && source.longitude) coordsChange();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source.latitude, source.longitude]);
+
   const sourcePointGeoJSON: GeoJSON.FeatureCollection = {
     type: "FeatureCollection",
     features: [
@@ -412,7 +412,6 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
                 ...unselectedFeatures,
                 ...(selectedFeature ? [selectedFeature] : []),
               ];
-              console.log("Rendering routes: :", allFeatures.length);
               return (
                 <ShapeSource
                   id="routeSource"
@@ -423,7 +422,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
                     const fid = feature.properties?.id ?? feature.id;
                     const color =
                       fid === selectedRouteId ? "#00aFFF" : "#999999";
-                    const width = fid === selectedRouteId ? 5 : 3;
+                    const width = fid === selectedRouteId ? 5 : 4;
                     return (
                       <LineLayer
                         key={(fid + 1) * Math.random()}
