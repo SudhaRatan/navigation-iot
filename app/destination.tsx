@@ -16,9 +16,15 @@ const apiKey = process.env.EXPO_PUBLIC_GOOGLE_API_KEY;
 const Destination = () => {
   const colorScheme = useColorScheme();
   const GoogleRef = useRef<GooglePlacesAutocompleteRef>(null);
-  const [destination, setDestination] = useLocationStore(
-    useShallow((state) => [state.destination, state.setDestination]),
-  );
+  const [destination, setDestination, description, setDescription] =
+    useLocationStore(
+      useShallow((state) => [
+        state.destination,
+        state.setDestination,
+        state.description,
+        state.setDescription,
+      ]),
+    );
   const [destinationText, setDestinationText] = useState<string>("");
 
   useEffect(() => {
@@ -59,7 +65,10 @@ const Destination = () => {
         onPress={(data, details) => {
           const lat = details?.geometry.location.lat;
           const lng = details?.geometry.location.lng;
-          if (lat && lng) setDestination({ latitude: lat, longitude: lng });
+          if (lat && lng) {
+            setDestination({ latitude: lat, longitude: lng });
+            setDescription(data.description);
+          }
           router.back();
         }}
         renderLeftButton={() => (

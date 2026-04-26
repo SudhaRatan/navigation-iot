@@ -74,6 +74,27 @@ export default function RootLayout() {
             },
           }}
         />
+        <Stack.Screen
+          name="navigation_action"
+          options={{
+            headerShown: false,
+            headerTitle: "Navigation",
+            presentation: "formSheet",
+            sheetAllowedDetents: [0.4],
+            headerBackButtonMenuEnabled: false,
+            headerLeft: () => {
+              return (
+                <TouchableOpacity
+                  onPress={() => {
+                    router.back();
+                  }}
+                >
+                  <ThemedText style={{ color: "#007AFF" }}>Back</ThemedText>
+                </TouchableOpacity>
+              );
+            },
+          }}
+        />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

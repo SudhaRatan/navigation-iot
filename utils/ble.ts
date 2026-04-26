@@ -158,10 +158,10 @@ function packRoute(routeCoords: [number, number][]) {
     let x = Math.round(dx * scale);
     let y = Math.round(dy * scale);
 
-    if (x > 127) x = 127;
-    if (x < -128) x = -128;
-    if (y > 127) y = 127;
-    if (y < -128) y = -128;
+    if (x > 239) x = 239;
+    if (x < -240) x = -240;
+    if (y > 239) y = 239;
+    if (y < -240) y = -240;
 
     arr.push(x & 0xff);
     arr.push(y & 0xff);

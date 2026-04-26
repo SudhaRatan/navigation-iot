@@ -1,5 +1,5 @@
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { Coords } from "@/stores/locationStore";
+import useLocationStore, { Coords } from "@/stores/locationStore";
 import { writeCoordsPackets, writeStreamPackets } from "@/utils/ble";
 import {
   Camera,
@@ -15,6 +15,7 @@ import React, { useEffect, useState } from "react";
 import {
   ColorSchemeName,
   GestureResponderEvent,
+  Pressable,
   StyleSheet,
   Text,
   TouchableHighlight,
@@ -22,8 +23,11 @@ import {
   View,
 } from "react-native";
 import { Device } from "react-native-ble-plx";
+import { useShallow } from "zustand/react/shallow";
+import { ThemedText } from "./themed-text";
 import { ThemedView } from "./themed-view";
 import { IconSymbol } from "./ui/icon-symbol.ios";
+import SegmentedControl from "./ui/SegmentedControl";
 
 type Props = {
   source: Coords;
@@ -32,11 +36,21 @@ type Props = {
 };
 
 export default function RoutePreview({ source, dest, connectedDevice }: Props) {
-  const [routeGeoJSON, setRouteGeoJSON] = useState<any>(null);
+  const [routeGeoJSON, setRouteGeoJSON, description, setDescription] =
+    useLocationStore(
+      useShallow((state) => [
+        state.routeGeoJSON,
+        state.setRouteGeoJSON,
+        state.description,
+        state.setDescription,
+      ]),
+    );
   const [selectedRouteId, setSelectedRouteId] = useState<number>(0);
   const [isFollowing, setIsFollowing] = useState<boolean>(true);
   const [recenterCounter, setRecenterCounter] = useState<number>(0);
   const [secondaryRoadsGeoJSON, setSecondaryRoadsGeoJSON] = useState<any>(null);
+  const [tab, setTab] = useState<"clock" | "star" | "heart">("clock");
+  const [routeTab, setRouteTab] = useState<number>(0);
   const colorScheme = useColorScheme();
   const style = styles({ colorScheme });
 
@@ -100,6 +114,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
   const enterDestinationPress = () => {
     // setShowGoogleAutoComplete(true);
+    setDescription(null);
     router.navigate("/destination");
   };
 
@@ -194,15 +209,14 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     riderLon: number,
     target: [number, number],
   ) {
-    // SAME AS HTML RENDER SCALE
     const scale = 0.4;
 
     const metersPerDegLat = 111320;
     const metersPerDegLon = 111320 * Math.cos((riderLat * Math.PI) / 180);
 
     // OLED size
-    const SCREEN_W = 128;
-    const SCREEN_H = 64;
+    const SCREEN_W = 240;
+    const SCREEN_H = 240;
 
     // we want 3x3 screen area
     const halfW = (SCREEN_W * 3) / 2; // 192
@@ -311,7 +325,9 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   }
 
   useEffect(() => {
-    if (dest.latitude && dest.longitude) loadRoute();
+    if (dest.latitude && dest.longitude) {
+      loadRoute();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dest.latitude, dest.longitude]);
 
@@ -402,10 +418,11 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
           {routeGeoJSON &&
             (() => {
-              const unselectedFeatures = routeGeoJSON.features.filter(
+              const slicedFeatures = routeGeoJSON.features.slice(0, 3);
+              const unselectedFeatures = slicedFeatures.filter(
                 (f: any) => (f.properties?.id ?? f.id) !== selectedRouteId,
               );
-              const selectedFeature = routeGeoJSON.features.find(
+              const selectedFeature = slicedFeatures.find(
                 (f: any) => (f.properties?.id ?? f.id) === selectedRouteId,
               );
               const allFeatures = [
@@ -454,24 +471,128 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           >
             <IconSymbol color="#007aff" size={24} name="location" />
           </TouchableOpacity>
-          <TouchableHighlight
-            style={style.destinationBtn}
-            onPress={enterDestinationPress}
-            underlayColor={colorScheme === "dark" ? "#1e1e1e" : "#e2e2e2"}
+          <ThemedView
+            style={{
+              flex: 1,
+              alignItems: "flex-start",
+              flexDirection: "column",
+              width: "100%",
+              padding: 12,
+              paddingBottom: 24,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              gap: 12,
+            }}
           >
             <View
-              style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+              style={{
+                width: "15%",
+                height: 4,
+                backgroundColor: "gray",
+                alignSelf: "center",
+                borderRadius: 5,
+                marginBottom: 10,
+              }}
+            />
+            <TouchableHighlight
+              style={style.destinationBtn}
+              onPress={enterDestinationPress}
+              underlayColor={colorScheme === "dark" ? "#1e1e1e" : "#e2e2e2"}
             >
-              <IconSymbol color="#007aff" size={22} name="magnifyingglass" />
-              <Text
+              <View
                 style={{
-                  color: colorScheme === "dark" ? "#818181" : "#818181",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  overflow: "hidden",
+                  paddingRight: 4,
                 }}
               >
-                Enter destination
-              </Text>
-            </View>
-          </TouchableHighlight>
+                <IconSymbol color="#007aff" size={22} name="magnifyingglass" />
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    color: colorScheme === "dark" ? "#818181" : "#818181",
+                  }}
+                >
+                  {description || "Enter destination"}
+                </Text>
+              </View>
+            </TouchableHighlight>
+            {description && (
+              <>
+                <SegmentedControl
+                  iconsOnly
+                  value={tab}
+                  onChange={setTab}
+                  activeColor={colorScheme !== "dark" ? "#fff" : "#151718"}
+                  backgroundColor={
+                    colorScheme === "dark" ? "#313131" : "#ececec"
+                  }
+                  tintColor={"#007afa"}
+                  segments={[
+                    {
+                      value: "star",
+                      icon: (
+                        <IconSymbol
+                          name="motorcycle.fill"
+                          size={24}
+                          color={"white"}
+                        />
+                      ),
+                    },
+                    {
+                      value: "clock",
+                      icon: (
+                        <IconSymbol name="car.fill" size={24} color={"white"} />
+                      ),
+                    },
+                    {
+                      value: "heart",
+                      icon: (
+                        <IconSymbol
+                          name="figure.walk"
+                          size={24}
+                          color={"white"}
+                        />
+                      ),
+                    },
+                  ]}
+                />
+                <SegmentedControl
+                  labelsOnly
+                  value={selectedRouteId}
+                  onChange={(val) => {
+                    setSelectedRouteId(val);
+                  }}
+                  activeColor={colorScheme !== "dark" ? "#fff" : "#151718"}
+                  backgroundColor={
+                    colorScheme === "dark" ? "#313131" : "#ececec"
+                  }
+                  tintColor={"#007afa"}
+                  segments={routeGeoJSON.features.map((i: any) => {
+                    let routeid: number = i.properties?.id
+                      ? i.properties?.id + 1
+                      : i.id + 1;
+                    if (!routeid) routeid = 1;
+                    return {
+                      value: i.properties?.id ?? i.id,
+                      label: `Route ${routeid}`,
+                    };
+                  })}
+                />
+                <Pressable
+                  onPressOut={() => {}}
+                  style={style.routeBtn}
+                  onPress={start}
+                >
+                  <ThemedText style={style.routeBtnText}>
+                    Choose route
+                  </ThemedText>
+                </Pressable>
+              </>
+            )}
+          </ThemedView>
         </View>
       </View>
       {/* <Button
@@ -491,12 +612,13 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 const styles = ({ colorScheme }: { colorScheme: ColorSchemeName }) =>
   StyleSheet.create({
     container: { flex: 1 },
-    map: { flex: 1, borderRadius: 16, overflow: "hidden" },
+    map: { flex: 1, overflow: "hidden" },
     centerButton: {
       borderRadius: 8,
       elevation: 4,
       paddingHorizontal: 14,
       paddingVertical: 10,
+      margin: 12,
     },
     centerButtonText: {
       color: "white",
@@ -504,13 +626,12 @@ const styles = ({ colorScheme }: { colorScheme: ColorSchemeName }) =>
     },
     actionContainer: {
       position: "absolute",
-      bottom: 10,
+      bottom: 0,
+      left: 0,
       justifyContent: "center",
       alignItems: "flex-end",
       gap: 10,
       width: "100%",
-      paddingHorizontal: 8,
-      paddingBottom: 10,
     },
     destinationBtn: {
       backgroundColor: colorScheme === "dark" ? "#1f1f1f" : "#e1e1e1",
@@ -522,5 +643,20 @@ const styles = ({ colorScheme }: { colorScheme: ColorSchemeName }) =>
       elevation: 4,
       borderWidth: 1,
       borderColor: colorScheme === "dark" ? "#1a1a1a" : "#c1c1c1",
+    },
+    routeBtn: {
+      backgroundColor: "#007afa",
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      borderRadius: 800,
+      flex: 1,
+      width: "100%",
+      elevation: 4,
+    },
+    routeBtnText: {
+      color: "#e1e1e1",
+      fontWeight: "600",
+      textAlign: "center",
+      flex: 1,
     },
   });
