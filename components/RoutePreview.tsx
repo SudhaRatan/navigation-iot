@@ -587,7 +587,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
                   onPress={start}
                 >
                   <ThemedText style={style.routeBtnText}>
-                    Choose route
+                    Start navigation
                   </ThemedText>
                 </Pressable>
               </>
