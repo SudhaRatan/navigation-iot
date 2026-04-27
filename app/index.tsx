@@ -19,11 +19,8 @@ export default function Index() {
   const [location, setLocation] = useState<Location.LocationObject | null>(
     null,
   );
-  const [destination, setDestination] = useLocationStore(
-    useShallow((state) => [state.destination, state.setDestination]),
-  );
+  const destination = useLocationStore((state) => state.destination);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showGoogleAutoComplete, setShowGoogleAutoComplete] = useState(false);
   const [device, setDevice] = useDeviceStore(
     useShallow((state) => [state.device, state.setDevice]),
   );
@@ -116,7 +113,7 @@ export default function Index() {
           }
         />
       )} */}
-      {destination && location && !showGoogleAutoComplete && (
+      {destination && location && (
         <>
           <RoutePreview
             dest={{
@@ -131,35 +128,6 @@ export default function Index() {
           />
         </>
       )}
-      {/* {showGoogleAutoComplete && (
-        <GooglePlacesAutocomplete
-          ref={GoogleRef}
-          placeholder="Enter destination"
-          fetchDetails={true}
-          query={{
-            key: apiKey,
-            language: "en",
-          }}
-          debounce={300}
-          onPress={(data, details) => {
-            const lat = details?.geometry.location.lat;
-            const lng = details?.geometry.location.lng;
-            if (lat && lng) setDestination({ latitude: lat, longitude: lng });
-            setShowGoogleAutoComplete(false);
-          }}
-          styles={{
-            textInput: {
-              backgroundColor: "transparent",
-              color: colorScheme === "dark" ? "white" : "black",
-            },
-            listView: {
-              backgroundColor: "transparent",
-              color: colorScheme === "dark" ? "white" : "black",
-            },
-            container: { flex: 1 },
-          }}
-        />
-      )} */}
     </ThemedView>
   );
 }

@@ -27,13 +27,59 @@ import { useShallow } from "zustand/react/shallow";
 import { ThemedText } from "./themed-text";
 import { ThemedView } from "./themed-view";
 import { IconSymbol } from "./ui/icon-symbol.ios";
-import SegmentedControl from "./ui/SegmentedControl";
+import { SegmentedControl } from "./ui/SegmentedControl";
+
+const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_MapsApiKey;
+
+type TravelMode = "DRIVE" | "TWO_WHEELER" | "BICYCLE" | "WALK";
+
+type RouteModifiers = {
+  avoidTolls: boolean;
+  avoidHighways: boolean;
+  avoidFerries: boolean;
+};
 
 type Props = {
   source: Coords;
   dest: Coords;
   connectedDevice: Device | null;
 };
+
+function decodePolyline(encoded: string): [number, number][] {
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+  const coordinates: [number, number][] = [];
+
+  while (index < encoded.length) {
+    let shift = 0;
+    let result = 0;
+    let byte: number;
+
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+
+    shift = 0;
+    result = 0;
+
+    do {
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
+
+    coordinates.push([lng / 1e5, lat / 1e5]);
+  }
+
+  return coordinates;
+}
 
 export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   const [routeGeoJSON, setRouteGeoJSON, description, setDescription] =
@@ -45,49 +91,117 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
         state.setDescription,
       ]),
     );
+
   const [selectedRouteId, setSelectedRouteId] = useState<number>(0);
   const [isFollowing, setIsFollowing] = useState<boolean>(true);
-  const [recenterCounter, setRecenterCounter] = useState<number>(0);
   const [secondaryRoadsGeoJSON, setSecondaryRoadsGeoJSON] = useState<any>(null);
-  const [tab, setTab] = useState<"clock" | "star" | "heart">("clock");
-  const [routeTab, setRouteTab] = useState<number>(0);
+  const [travelMode, setTravelMode] = useState<TravelMode>("DRIVE");
+  const [routeModifiers, setRouteModifiers] = useState<RouteModifiers>({
+    avoidTolls: false,
+    avoidHighways: false,
+    avoidFerries: false,
+  });
+  const [showMore, setShowMore] = useState<boolean>(true);
+
   const colorScheme = useColorScheme();
   const style = styles({ colorScheme });
 
-  async function loadRoute() {
-    const res = await fetch(
-      `https://router.project-osrm.org/route/v1/driving/${source.longitude},${source.latitude};${dest.longitude},${dest.latitude}?overview=full&geometries=geojson&alternatives=true`,
-    );
-
-    const json = await res.json();
-
-    const features = json.routes.map((route: any, index: number) => ({
-      type: "Feature",
-      geometry: {
-        type: "LineString",
-        coordinates: route.geometry.coordinates,
-      },
-      properties: {
-        id: index,
-        distance: route.distance,
-        duration: route.duration,
-      },
-    }));
-
-    setRouteGeoJSON({
-      type: "FeatureCollection",
-      features,
-    });
-
-    setSelectedRouteId(0);
-    const firstRoute = json.routes?.[0]?.geometry?.coordinates;
-    if (firstRoute?.length > 0 && source.latitude && source.longitude) {
-      await fetchSecondaryRoads(
-        source.latitude,
-        source.longitude,
-        firstRoute[0],
+  async function loadRoute(
+    mode: TravelMode = travelMode,
+    modifiers: RouteModifiers = routeModifiers,
+  ) {
+    try {
+      const res = await fetch(
+        "https://routes.googleapis.com/directions/v2:computeRoutes",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_API_KEY,
+            "X-Goog-FieldMask":
+              "routes.polyline,routes.duration,routes.distanceMeters,routes.description",
+          } as HeadersInit,
+          body: JSON.stringify({
+            origin: {
+              location: {
+                latLng: {
+                  latitude: source.latitude,
+                  longitude: source.longitude,
+                },
+              },
+            },
+            destination: {
+              location: {
+                latLng: {
+                  latitude: dest.latitude,
+                  longitude: dest.longitude,
+                },
+              },
+            },
+            travelMode: mode,
+            ...(mode === "DRIVE" || mode === "TWO_WHEELER"
+              ? {
+                  routingPreference: "TRAFFIC_AWARE",
+                  computeAlternativeRoutes: true,
+                }
+              : { computeAlternativeRoutes: false }),
+            routeModifiers:
+              mode === "DRIVE" || mode === "TWO_WHEELER"
+                ? {
+                    avoidTolls: modifiers.avoidTolls,
+                    avoidHighways: modifiers.avoidHighways,
+                    avoidFerries: modifiers.avoidFerries,
+                  }
+                : {},
+          }),
+        },
       );
+
+      const json = await res.json();
+
+      if (!json.routes || json.routes.length === 0) {
+        console.warn("Google Routes API: no routes found", json);
+        return;
+      }
+
+      const features = json.routes.map((route: any, index: number) => {
+        const coords = decodePolyline(route.polyline.encodedPolyline);
+        return {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: coords,
+          },
+          properties: {
+            id: index,
+            duration: parseFloat(route.duration?.replace("s", "") ?? "0"),
+            distance: route.distanceMeters ?? 0,
+          },
+        };
+      });
+
+      setRouteGeoJSON({ type: "FeatureCollection", features });
+      setSelectedRouteId(0);
+
+      const firstCoords = features[0]?.geometry?.coordinates;
+      if (firstCoords?.length > 0 && source.latitude && source.longitude) {
+        await fetchSecondaryRoads(
+          source.latitude,
+          source.longitude,
+          firstCoords[0],
+        );
+      }
+    } catch (error) {
+      console.error("loadRoute error:", error);
     }
+  }
+
+  function toggleModifier(key: keyof RouteModifiers) {
+    setRouteModifiers((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      loadRoute(travelMode, next);
+      return next;
+    });
   }
 
   function handleSourcePress(e: any) {
@@ -100,7 +214,6 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     if (typeof pressedId === "number") setSelectedRouteId(pressedId);
   }
 
-  // Called when user interacts with the map (pans/zooms) to stop following.
   function handleMapTouch(_e: GestureResponderEvent) {
     setIsFollowing(false);
   }
@@ -108,12 +221,10 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   function handleCenterPress() {
     if (source.latitude && source.longitude) {
       setIsFollowing(true);
-      setRecenterCounter((c) => c + 1);
     }
   }
 
   const enterDestinationPress = () => {
-    // setShowGoogleAutoComplete(true);
     setDescription(null);
     router.navigate("/destination");
   };
@@ -127,28 +238,22 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
     const metersPerDegLat = 111320;
     const metersPerDegLon = 111320 * Math.cos((originLat * Math.PI) / 180);
-    const scale = 0.4; // Must match ESP32 & Secondary Roads
-
+    const scale = 0.4;
     const arr: number[] = [];
 
     routeCoords.forEach((pt: any, i: number) => {
-      // OSRM returns coordinates as [lon, lat]
       const lon = pt[0];
       const lat = pt[1];
 
-      let dx = (lon - originLon) * metersPerDegLon;
-      let dy = (lat - originLat) * metersPerDegLat;
+      const dx = (lon - originLon) * metersPerDegLon;
+      const dy = (lat - originLat) * metersPerDegLat;
 
-      let x = Math.round(dx * scale);
-      let y = Math.round(-dy * scale);
+      const x = Math.round(dx * scale);
+      const y = Math.round(-dy * scale);
 
-      arr.push(i === 0 ? 0 : 1); // 0 = moveTo, 1 = lineTo
-
-      // Push 16-bit X (Little Endian)
+      arr.push(i === 0 ? 0 : 1);
       arr.push(x & 0xff);
       arr.push((x >> 8) & 0xff);
-
-      // Push 16-bit Y (Little Endian)
       arr.push(y & 0xff);
       arr.push((y >> 8) & 0xff);
     });
@@ -158,17 +263,14 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
   function getSelectedRouteCoords() {
     if (!routeGeoJSON) return null;
-
     const feature = routeGeoJSON.features.find(
       (f: any) => (f.properties?.id ?? f.id) === selectedRouteId,
     );
-
     return feature?.geometry?.coordinates || null;
   }
 
   const start = async () => {
     if (connectedDevice && source.latitude && source.longitude) {
-      // 1. Pack and send the MAIN route using the 16-bit format
       const routeCoords = getSelectedRouteCoords();
       const packedMain = packMainRoute(
         routeCoords,
@@ -179,7 +281,6 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
         await writeStreamPackets(connectedDevice, "MAP", packedMain);
       }
 
-      // 2. Pack and send the SECONDARY roads
       const roads = getSecondaryRoadCoords();
       const packedRoads = packSecondaryRoads(
         roads,
@@ -193,9 +294,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   };
 
   const coordsChange = async () => {
-    // write code to change dest lat lon from buttons and then send the changed data using
     if (connectedDevice && source.latitude && source.longitude) {
-      console.log(source);
       await writeCoordsPackets(
         connectedDevice,
         source.latitude,
@@ -210,23 +309,16 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     target: [number, number],
   ) {
     const scale = 0.4;
-
     const metersPerDegLat = 111320;
     const metersPerDegLon = 111320 * Math.cos((riderLat * Math.PI) / 180);
 
-    // OLED size
     const SCREEN_W = 240;
     const SCREEN_H = 240;
+    const halfW = (SCREEN_W * 3) / 2;
+    const halfH = (SCREEN_H * 3) / 2;
 
-    // we want 3x3 screen area
-    const halfW = (SCREEN_W * 3) / 2; // 192
-    const halfH = (SCREEN_H * 3) / 2; // 96
-
-    // convert screen pixels → meters
     const maxMetersX = halfW / scale;
     const maxMetersY = halfH / scale;
-
-    // meters → lat/lon delta
     const lonDelta = maxMetersX / metersPerDegLon;
     const latDelta = maxMetersY / metersPerDegLat;
 
@@ -243,7 +335,6 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   `;
 
     try {
-      console.log("Fetching secondary roads");
       const res = await fetch("https://overpass-api.de/api/interpreter", {
         method: "POST",
         body: query,
@@ -262,24 +353,17 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           properties: {},
         }));
 
-      setSecondaryRoadsGeoJSON({
-        type: "FeatureCollection",
-        features,
-      });
-      console.log("Fetched secondary roads:", features.length);
+      setSecondaryRoadsGeoJSON({ type: "FeatureCollection", features });
     } catch (error) {
       console.log("Error fetching secondary roads:", error);
-      console.log("Retrying...");
-      fetchSecondaryRoads(riderLat, riderLon, target);
     }
   }
 
   function getSecondaryRoadCoords() {
     if (!secondaryRoadsGeoJSON) return [];
-
-    return secondaryRoadsGeoJSON.features.map((f: any) => {
-      return f.geometry.coordinates; // [[lon,lat]...]
-    });
+    return secondaryRoadsGeoJSON.features.map(
+      (f: any) => f.geometry.coordinates,
+    );
   }
 
   function packSecondaryRoads(
@@ -292,30 +376,22 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     const metersPerDegLat = 111320;
     const metersPerDegLon = 111320 * Math.cos((originLat * Math.PI) / 180);
     const scale = 0.4;
-
     const arr: number[] = [];
 
     roadsRaw.forEach((road) => {
       road.forEach((pt: any, i: number) => {
         const lon = pt.lon !== undefined ? pt.lon : pt[0];
         const lat = pt.lat !== undefined ? pt.lat : pt[1];
-
         if (lon === undefined || lat === undefined) return;
 
-        let dx = (lon - originLon) * metersPerDegLon;
-        let dy = (lat - originLat) * metersPerDegLat;
+        const dx = (lon - originLon) * metersPerDegLon;
+        const dy = (lat - originLat) * metersPerDegLat;
+        const x = Math.round(dx * scale);
+        const y = Math.round(-dy * scale);
 
-        // NO CLAMPING: We calculate the true, absolute map coordinates
-        let x = Math.round(dx * scale);
-        let y = Math.round(-dy * scale);
-
-        arr.push(i === 0 ? 0 : 1); // 0 = moveTo, 1 = lineTo
-
-        // Push 16-bit X (Little Endian: Least Significant Byte first)
+        arr.push(i === 0 ? 0 : 1);
         arr.push(x & 0xff);
         arr.push((x >> 8) & 0xff);
-
-        // Push 16-bit Y (Little Endian)
         arr.push(y & 0xff);
         arr.push((y >> 8) & 0xff);
       });
@@ -335,6 +411,13 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     if (connectedDevice && source.latitude && source.longitude) coordsChange();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source.latitude, source.longitude]);
+
+  useEffect(() => {
+    if (dest.latitude && dest.longitude) {
+      loadRoute(travelMode, routeModifiers);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [travelMode]);
 
   const sourcePointGeoJSON: GeoJSON.FeatureCollection = {
     type: "FeatureCollection",
@@ -364,6 +447,25 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     ],
   };
 
+  const TRAVEL_MODES: { value: TravelMode; sfSymbol: string; label: string }[] =
+    [
+      { value: "DRIVE", sfSymbol: "car.fill", label: "Car" },
+      { value: "TWO_WHEELER", sfSymbol: "motorcycle.fill", label: "Moto" },
+      // { value: "BICYCLE", sfSymbol: "bicycle", label: "Bike" },
+      { value: "WALK", sfSymbol: "figure.walk", label: "Walk" },
+    ];
+
+  // Derive selected route's ETA and distance for display below segment control
+  const selectedRouteFeature = routeGeoJSON?.features?.find(
+    (f: any) => (f.properties?.id ?? f.id) === selectedRouteId,
+  );
+  const selectedMins = selectedRouteFeature
+    ? Math.round(selectedRouteFeature.properties.duration / 60)
+    : null;
+  const selectedKm = selectedRouteFeature
+    ? (selectedRouteFeature.properties.distance / 1000).toFixed(1)
+    : null;
+
   return (
     <ThemedView style={style.container}>
       <View style={style.map} onTouchStart={handleMapTouch}>
@@ -375,19 +477,15 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
               : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
           }
         >
-          {/* Camera will recenter only when `isFollowing` is true. */}
           <Camera
             animationMode="easeTo"
             animationDuration={500}
             zoomLevel={15}
             {...(isFollowing && source.latitude && source.longitude
-              ? {
-                  centerCoordinate: [source.longitude, source.latitude],
-                }
+              ? { centerCoordinate: [source.longitude, source.latitude] }
               : {})}
           />
 
-          {/* Source location marker */}
           <ShapeSource id="sourcePoint" shape={sourcePointGeoJSON}>
             <CircleLayer
               id="sourceCircle"
@@ -401,7 +499,6 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
             />
           </ShapeSource>
 
-          {/* Destination location marker */}
           <ShapeSource id="destPoint" shape={destPointGeoJSON}>
             <SymbolLayer
               id="destSymbol"
@@ -416,47 +513,52 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
             />
           </ShapeSource>
 
-          {routeGeoJSON &&
-            (() => {
-              const slicedFeatures = routeGeoJSON.features.slice(0, 3);
-              const unselectedFeatures = slicedFeatures.filter(
-                (f: any) => (f.properties?.id ?? f.id) !== selectedRouteId,
-              );
-              const selectedFeature = slicedFeatures.find(
-                (f: any) => (f.properties?.id ?? f.id) === selectedRouteId,
-              );
-              const allFeatures = [
-                ...unselectedFeatures,
-                ...(selectedFeature ? [selectedFeature] : []),
-              ];
-              return (
-                <ShapeSource
-                  id="routeSource"
-                  shape={routeGeoJSON}
-                  onPress={handleSourcePress}
-                >
-                  {allFeatures.map((feature: any) => {
-                    const fid = feature.properties?.id ?? feature.id;
-                    const color =
-                      fid === selectedRouteId ? "#00aFFF" : "#999999";
-                    const width = fid === selectedRouteId ? 5 : 4;
-                    return (
-                      <LineLayer
-                        key={(fid + 1) * Math.random()}
-                        id={`routeLine-${fid}`}
-                        sourceID="routeSource"
-                        filter={["==", ["get", "id"], fid]}
-                        style={{
-                          lineColor: color,
-                          lineWidth: width,
-                        }}
-                      />
-                    );
-                  })}
-                </ShapeSource>
-              );
-            })()}
+          {routeGeoJSON && (
+            <ShapeSource
+              id="routeSource"
+              shape={routeGeoJSON}
+              onPress={handleSourcePress}
+            >
+              <LineLayer
+                id="routeLine-0"
+                sourceID="routeSource"
+                filter={[
+                  "all",
+                  ["==", ["get", "id"], 0],
+                  ["!=", ["get", "id"], selectedRouteId],
+                ]}
+                style={{ lineColor: "#999999", lineWidth: 4 }}
+              />
+              <LineLayer
+                id="routeLine-1"
+                sourceID="routeSource"
+                filter={[
+                  "all",
+                  ["==", ["get", "id"], 1],
+                  ["!=", ["get", "id"], selectedRouteId],
+                ]}
+                style={{ lineColor: "#999999", lineWidth: 4 }}
+              />
+              <LineLayer
+                id="routeLine-2"
+                sourceID="routeSource"
+                filter={[
+                  "all",
+                  ["==", ["get", "id"], 2],
+                  ["!=", ["get", "id"], selectedRouteId],
+                ]}
+                style={{ lineColor: "#999999", lineWidth: 4 }}
+              />
+              <LineLayer
+                id="routeLine-selected"
+                sourceID="routeSource"
+                filter={["==", ["get", "id"], selectedRouteId]}
+                style={{ lineColor: "#00aFFF", lineWidth: 5 }}
+              />
+            </ShapeSource>
+          )}
         </MapView>
+
         <View style={style.actionContainer}>
           <TouchableOpacity
             activeOpacity={0.9}
@@ -471,6 +573,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           >
             <IconSymbol color="#007aff" size={24} name="location" />
           </TouchableOpacity>
+
           <ThemedView
             style={{
               flex: 1,
@@ -481,19 +584,35 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
               paddingBottom: 24,
               borderTopLeftRadius: 20,
               borderTopRightRadius: 20,
-              gap: 12,
+              gap: 20,
+              paddingTop: 30,
             }}
           >
-            <View
-              style={{
-                width: "15%",
-                height: 4,
-                backgroundColor: "gray",
-                alignSelf: "center",
-                borderRadius: 5,
-                marginBottom: 10,
-              }}
-            />
+            {/* Drag handle */}
+            {description && (
+              <Pressable
+                onPress={() => {
+                  setShowMore(!showMore);
+                }}
+                style={{
+                  alignSelf: "center",
+                  width: "100%",
+                  alignItems: "center",
+                  position: "absolute",
+                  top: 4,
+                }}
+              >
+                <IconSymbol
+                  name={
+                    !showMore ? "chevron.compact.up" : "chevron.compact.down"
+                  }
+                  size={24}
+                  color="#fff"
+                />
+              </Pressable>
+            )}
+
+            {/* Destination search bar */}
             <TouchableHighlight
               style={style.destinationBtn}
               onPress={enterDestinationPress}
@@ -509,83 +628,129 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
                 }}
               >
                 <IconSymbol color="#007aff" size={22} name="magnifyingglass" />
-                <Text
-                  numberOfLines={1}
-                  style={{
-                    color: colorScheme === "dark" ? "#818181" : "#818181",
-                  }}
-                >
+                <Text numberOfLines={1} style={{ color: "#818181" }}>
                   {description || "Enter destination"}
                 </Text>
               </View>
             </TouchableHighlight>
-            {description && (
+
+            {description && routeGeoJSON && (
               <>
-                <SegmentedControl
-                  iconsOnly
-                  value={tab}
-                  onChange={setTab}
-                  activeColor={colorScheme !== "dark" ? "#fff" : "#151718"}
-                  backgroundColor={
-                    colorScheme === "dark" ? "#313131" : "#ececec"
-                  }
-                  tintColor={"#007afa"}
-                  segments={[
-                    {
-                      value: "star",
-                      icon: (
-                        <IconSymbol
-                          name="motorcycle.fill"
-                          size={24}
-                          color={"white"}
-                        />
-                      ),
-                    },
-                    {
-                      value: "clock",
-                      icon: (
-                        <IconSymbol name="car.fill" size={24} color={"white"} />
-                      ),
-                    },
-                    {
-                      value: "heart",
-                      icon: (
-                        <IconSymbol
-                          name="figure.walk"
-                          size={24}
-                          color={"white"}
-                        />
-                      ),
-                    },
-                  ]}
-                />
-                <SegmentedControl
-                  labelsOnly
-                  value={selectedRouteId}
-                  onChange={(val) => {
-                    setSelectedRouteId(val);
-                  }}
-                  activeColor={colorScheme !== "dark" ? "#fff" : "#151718"}
-                  backgroundColor={
-                    colorScheme === "dark" ? "#313131" : "#ececec"
-                  }
-                  tintColor={"#007afa"}
-                  segments={routeGeoJSON.features.map((i: any) => {
-                    let routeid: number = i.properties?.id
-                      ? i.properties?.id + 1
-                      : i.id + 1;
-                    if (!routeid) routeid = 1;
-                    return {
-                      value: i.properties?.id ?? i.id,
-                      label: `Route ${routeid}`,
-                    };
-                  })}
-                />
-                <Pressable
-                  onPressOut={() => {}}
-                  style={style.routeBtn}
-                  onPress={start}
-                >
+                {showMore ? (
+                  <>
+                    {/* Travel mode selector */}
+                    <SegmentedControl
+                      iconsOnly
+                      value={travelMode}
+                      onChange={(val) => setTravelMode(val as TravelMode)}
+                      activeColor={colorScheme !== "dark" ? "#fff" : "#151718"}
+                      backgroundColor={
+                        colorScheme === "dark" ? "#313131" : "#ececec"
+                      }
+                      tintColor={"#007afa"}
+                      segments={TRAVEL_MODES.map((m) => ({
+                        value: m.value,
+                        icon: (
+                          <IconSymbol
+                            name={m.sfSymbol as any}
+                            size={20}
+                            color={
+                              travelMode === m.value
+                                ? colorScheme !== "dark"
+                                  ? "#151718"
+                                  : "#fff"
+                                : "#818181"
+                            }
+                          />
+                        ),
+                      }))}
+                    />
+
+                    {/* Avoid toggles */}
+                    {travelMode === "DRIVE" || travelMode === "TWO_WHEELER" ? (
+                      <View style={style.avoidRow}>
+                        {(
+                          [
+                            { key: "avoidTolls", label: "Tolls" },
+                            { key: "avoidHighways", label: "Highways" },
+                            { key: "avoidFerries", label: "Ferries" },
+                          ] as { key: keyof RouteModifiers; label: string }[]
+                        ).map(({ key, label }) => (
+                          <TouchableOpacity
+                            key={key}
+                            onPress={() => toggleModifier(key)}
+                            style={[
+                              style.avoidBtn,
+                              {
+                                backgroundColor: routeModifiers[key]
+                                  ? colorScheme === "dark"
+                                    ? "#000"
+                                    : "#fff"
+                                  : colorScheme === "dark"
+                                    ? "#313131"
+                                    : "#ececec",
+                              },
+                            ]}
+                          >
+                            <IconSymbol
+                              color="#007afa"
+                              name={routeModifiers[key] ? "xmark" : "checkmark"}
+                              size={12}
+                            />
+                            <Text style={[style.avoidLabel, { color: "#fff" }]}>
+                              {label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    ) : (
+                      <></>
+                    )}
+
+                    {/* Route selector (labels only, no eta/distance in segments) */}
+                    {routeGeoJSON.features.length > 1 && (
+                      <SegmentedControl
+                        labelsOnly
+                        value={selectedRouteId}
+                        onChange={(val) => setSelectedRouteId(val)}
+                        activeColor={
+                          colorScheme !== "dark" ? "#fff" : "#151718"
+                        }
+                        backgroundColor={
+                          colorScheme === "dark" ? "#313131" : "#ececec"
+                        }
+                        tintColor={"#007afa"}
+                        segments={routeGeoJSON.features.map((f: any) => {
+                          const id = f.properties?.id ?? f.id ?? 0;
+                          return {
+                            value: id,
+                            label: `Route ${id + 1}`,
+                          };
+                        })}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <></>
+                )}
+
+                {/* ETA and distance for the selected route */}
+                {selectedMins !== null && selectedKm !== null && (
+                  <View style={style.etaRow}>
+                    <View style={style.etaItem}>
+                      <Text style={style.etaValue}>{selectedMins} min</Text>
+                      <Text style={style.etaLabel}>ETA</Text>
+                    </View>
+                    <View style={style.etaDivider} />
+                    <View style={style.etaItem}>
+                      <Text style={style.etaValue}>{selectedKm} km</Text>
+                      <Text style={style.etaLabel}>Distance</Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Start button */}
+                <Pressable style={style.routeBtn} onPress={start}>
                   <ThemedText style={style.routeBtnText}>
                     Start navigation
                   </ThemedText>
@@ -595,16 +760,6 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           </ThemedView>
         </View>
       </View>
-      {/* <Button
-        title="Start"
-        color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
-        onPress={start}
-      />
-      <Button
-        title="Send change"
-        color={colorScheme === "dark" ? "#1f1f1f" : "#828282"}
-        onPress={coordsChange}
-      /> */}
     </ThemedView>
   );
 }
@@ -620,17 +775,12 @@ const styles = ({ colorScheme }: { colorScheme: ColorSchemeName }) =>
       paddingVertical: 10,
       margin: 12,
     },
-    centerButtonText: {
-      color: "white",
-      fontWeight: "600",
-    },
     actionContainer: {
       position: "absolute",
       bottom: 0,
       left: 0,
       justifyContent: "center",
       alignItems: "flex-end",
-      gap: 10,
       width: "100%",
     },
     destinationBtn: {
@@ -638,18 +788,60 @@ const styles = ({ colorScheme }: { colorScheme: ColorSchemeName }) =>
       paddingHorizontal: 14,
       paddingVertical: 14,
       borderRadius: 8,
-      flex: 1,
       width: "100%",
       elevation: 4,
       borderWidth: 1,
       borderColor: colorScheme === "dark" ? "#1a1a1a" : "#c1c1c1",
+    },
+
+    avoidRow: {
+      flexDirection: "row",
+      gap: 8,
+      width: "100%",
+    },
+    avoidBtn: {
+      flex: 1,
+      paddingVertical: 8,
+      borderRadius: 8,
+      alignItems: "center",
+      flexDirection: "row",
+      justifyContent: "center",
+      gap: 4,
+    },
+    avoidLabel: {
+      fontSize: 11,
+      fontWeight: "600",
+    },
+    etaRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      width: "100%",
+      paddingHorizontal: 4,
+      gap: 16,
+    },
+    etaItem: {
+      alignItems: "flex-start",
+      gap: 2,
+    },
+    etaValue: {
+      fontSize: 20,
+      fontWeight: "700",
+      color: colorScheme === "dark" ? "#ffffff" : "#111111",
+    },
+    etaLabel: {
+      fontSize: 12,
+      color: "#818181",
+    },
+    etaDivider: {
+      width: 1,
+      height: 32,
+      backgroundColor: colorScheme === "dark" ? "#444" : "#ddd",
     },
     routeBtn: {
       backgroundColor: "#007afa",
       paddingHorizontal: 14,
       paddingVertical: 14,
       borderRadius: 800,
-      flex: 1,
       width: "100%",
       elevation: 4,
     },
@@ -657,6 +849,5 @@ const styles = ({ colorScheme }: { colorScheme: ColorSchemeName }) =>
       color: "#e1e1e1",
       fontWeight: "600",
       textAlign: "center",
-      flex: 1,
     },
   });
