@@ -95,7 +95,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   const [selectedRouteId, setSelectedRouteId] = useState<number>(0);
   const [isFollowing, setIsFollowing] = useState<boolean>(true);
   const [secondaryRoadsGeoJSON, setSecondaryRoadsGeoJSON] = useState<any>(null);
-  const [travelMode, setTravelMode] = useState<TravelMode>("DRIVE");
+  const [travelMode, setTravelMode] = useState<TravelMode>("TWO_WHEELER");
   const [routeModifiers, setRouteModifiers] = useState<RouteModifiers>({
     avoidTolls: false,
     avoidHighways: false,
@@ -333,7 +333,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
   (${minLat},${minLon},${maxLat},${maxLon});
   out geom;
   `;
-
+    console.log("Fetching secondary roads: ", query);
     try {
       const res = await fetch("https://overpass-api.de/api/interpreter", {
         method: "POST",
@@ -352,7 +352,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           },
           properties: {},
         }));
-
+      console.log("Done fetching secondary roads");
       setSecondaryRoadsGeoJSON({ type: "FeatureCollection", features });
     } catch (error) {
       console.log("Error fetching secondary roads:", error);
@@ -449,8 +449,8 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
   const TRAVEL_MODES: { value: TravelMode; sfSymbol: string; label: string }[] =
     [
-      { value: "DRIVE", sfSymbol: "car.fill", label: "Car" },
       { value: "TWO_WHEELER", sfSymbol: "motorcycle.fill", label: "Moto" },
+      { value: "DRIVE", sfSymbol: "car.fill", label: "Car" },
       // { value: "BICYCLE", sfSymbol: "bicycle", label: "Bike" },
       { value: "WALK", sfSymbol: "figure.walk", label: "Walk" },
     ];
@@ -607,7 +607,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
                     !showMore ? "chevron.compact.up" : "chevron.compact.down"
                   }
                   size={24}
-                  color="#fff"
+                  color={colorScheme === "dark" ? "#fff" : "#000"}
                 />
               </Pressable>
             )}
@@ -697,7 +697,15 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
                               name={routeModifiers[key] ? "xmark" : "checkmark"}
                               size={12}
                             />
-                            <Text style={[style.avoidLabel, { color: "#fff" }]}>
+                            <Text
+                              style={[
+                                style.avoidLabel,
+                                {
+                                  color:
+                                    colorScheme === "dark" ? "#fff" : "#000",
+                                },
+                              ]}
+                            >
                               {label}
                             </Text>
                           </TouchableOpacity>
@@ -784,14 +792,12 @@ const styles = ({ colorScheme }: { colorScheme: ColorSchemeName }) =>
       width: "100%",
     },
     destinationBtn: {
-      backgroundColor: colorScheme === "dark" ? "#1f1f1f" : "#e1e1e1",
+      backgroundColor: colorScheme === "dark" ? "#1f1f1f" : "#f1f1f1",
       paddingHorizontal: 14,
       paddingVertical: 14,
       borderRadius: 8,
       width: "100%",
       elevation: 4,
-      borderWidth: 1,
-      borderColor: colorScheme === "dark" ? "#1a1a1a" : "#c1c1c1",
     },
 
     avoidRow: {
