@@ -1,6 +1,7 @@
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import useLocationStore, { Coords } from "@/stores/locationStore";
 import { writeCoordsPackets, writeStreamPackets } from "@/utils/ble";
+import { filterRoadsNearRoute } from "@/utils/location";
 import {
   Camera,
   CircleLayer,
@@ -233,6 +234,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           source.latitude,
           source.longitude,
           firstCoords[0],
+          firstCoords,
         );
       }
     } catch (error) {
@@ -353,6 +355,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     riderLat: number,
     riderLon: number,
     target: [number, number],
+    mainRouteCoords: [number, number][], // ← ADD THIS PARAM
   ) {
     const scale = 0.4;
     const metersPerDegLat = 111320;
@@ -374,12 +377,12 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     const maxLon = riderLon + lonDelta;
 
     const query = `
-  [out:json];
-  way["highway"]
-  (${minLat},${minLon},${maxLat},${maxLon});
-  out geom;
-  `;
-    console.log("Fetching secondary roads: ", query);
+[out:json];
+way["highway"]
+(${minLat},${minLon},${maxLat},${maxLon});
+out geom;
+`;
+
     try {
       const res = await fetch("https://overpass-api.de/api/interpreter", {
         method: "POST",
@@ -388,7 +391,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
       const data = await res.json();
 
-      const features = data.elements
+      const allFeatures: GeoJSON.Feature[] = data.elements
         .filter((el: any) => el.geometry)
         .map((el: any) => ({
           type: "Feature",
@@ -398,8 +401,17 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           },
           properties: {},
         }));
-      console.log("Done fetching secondary roads");
-      setSecondaryRoadsGeoJSON({ type: "FeatureCollection", features });
+
+      // ── KEY CHANGE: only keep roads adjacent to the main route ──
+      const filtered = filterRoadsNearRoute(allFeatures, mainRouteCoords, 80);
+      console.log(
+        `Secondary roads: ${allFeatures.length} fetched → ${filtered.length} kept`,
+      );
+
+      setSecondaryRoadsGeoJSON({
+        type: "FeatureCollection",
+        features: allFeatures,
+      });
     } catch (error) {
       console.log("Error fetching secondary roads:", error);
     }
