@@ -82,15 +82,21 @@ function decodePolyline(encoded: string): [number, number][] {
 }
 
 export default function RoutePreview({ source, dest, connectedDevice }: Props) {
-  const [routeGeoJSON, setRouteGeoJSON, description, setDescription] =
-    useLocationStore(
-      useShallow((state) => [
-        state.routeGeoJSON,
-        state.setRouteGeoJSON,
-        state.description,
-        state.setDescription,
-      ]),
-    );
+  const [
+    routeGeoJSON,
+    setRouteGeoJSON,
+    description,
+    setDescription,
+    setDestination,
+  ] = useLocationStore(
+    useShallow((state) => [
+      state.routeGeoJSON,
+      state.setRouteGeoJSON,
+      state.description,
+      state.setDescription,
+      state.setDestination,
+    ]),
+  );
 
   const [selectedRouteId, setSelectedRouteId] = useState<number>(0);
   const [isFollowing, setIsFollowing] = useState<boolean>(true);
@@ -101,10 +107,28 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
     avoidHighways: false,
     avoidFerries: false,
   });
-  const [showMore, setShowMore] = useState<boolean>(true);
+  const [showMore, setShowMore] = useState<boolean>(false);
+  const [sheetHeight, setSheetHeight] = useState<number>(0);
+  const cameraRef = React.useRef<any>(null);
 
   const colorScheme = useColorScheme();
   const style = styles({ colorScheme });
+
+  // Fit the map so both source and destination are visible above the sheet
+  function fitMapToRoute(
+    srcLat: number,
+    srcLon: number,
+    dstLat: number,
+    dstLon: number,
+    panelHeight: number,
+  ) {
+    cameraRef.current?.fitBounds(
+      [Math.max(srcLon, dstLon), Math.max(srcLat, dstLat)], // NE corner
+      [Math.min(srcLon, dstLon), Math.min(srcLat, dstLat)], // SW corner
+      [80, 48, panelHeight + 32, 48], // padding [top, right, bottom, left]
+      600,
+    );
+  }
 
   async function loadRoute(
     mode: TravelMode = travelMode,
@@ -182,6 +206,26 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
       setRouteGeoJSON({ type: "FeatureCollection", features });
       setSelectedRouteId(0);
+      setIsFollowing(false);
+
+      // sheetHeight is known if user had a previous destination — fit immediately.
+      // If this is the first load, onLayout on the sheet will call fitMapToRoute
+      // once the sheet renders and its height is measured.
+      if (
+        source.latitude &&
+        source.longitude &&
+        dest.latitude &&
+        dest.longitude &&
+        sheetHeight > 0
+      ) {
+        fitMapToRoute(
+          source.latitude,
+          source.longitude,
+          dest.latitude,
+          dest.longitude,
+          sheetHeight,
+        );
+      }
 
       const firstCoords = features[0]?.geometry?.coordinates;
       if (firstCoords?.length > 0 && source.latitude && source.longitude) {
@@ -226,6 +270,8 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
 
   const enterDestinationPress = () => {
     setDescription(null);
+    setRouteGeoJSON(null);
+    setDestination({ latitude: null, longitude: null });
     router.navigate("/destination");
   };
 
@@ -478,6 +524,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           }
         >
           <Camera
+            ref={cameraRef}
             animationMode="easeTo"
             animationDuration={500}
             zoomLevel={15}
@@ -575,6 +622,28 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
           </TouchableOpacity>
 
           <ThemedView
+            onLayout={(e) => {
+              const h = e.nativeEvent.layout.height;
+              // Only act when height actually changes (avoids infinite loops)
+              if (h > 0 && h !== sheetHeight) {
+                setSheetHeight(h);
+                if (
+                  dest.latitude &&
+                  dest.longitude &&
+                  source.latitude &&
+                  source.longitude &&
+                  routeGeoJSON
+                ) {
+                  fitMapToRoute(
+                    source.latitude,
+                    source.longitude,
+                    dest.latitude,
+                    dest.longitude,
+                    h,
+                  );
+                }
+              }
+            }}
             style={{
               flex: 1,
               alignItems: "flex-start",
@@ -588,7 +657,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
               paddingTop: 30,
             }}
           >
-            {/* Drag handle */}
+            {/* Collapse / expand handle */}
             {description && (
               <Pressable
                 onPress={() => {
@@ -715,7 +784,7 @@ export default function RoutePreview({ source, dest, connectedDevice }: Props) {
                       <></>
                     )}
 
-                    {/* Route selector (labels only, no eta/distance in segments) */}
+                    {/* Route selector */}
                     {routeGeoJSON.features.length > 1 && (
                       <SegmentedControl
                         labelsOnly
