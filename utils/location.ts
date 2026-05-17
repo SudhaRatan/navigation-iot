@@ -114,10 +114,90 @@ function filterRoadsNearRoute(
   });
 }
 
+/**
+ * Instead of keeping/dropping entire roads, this trims each road to only
+ * the contiguous segments where every point is within thresholdMeters
+ * of the main route. Long roads that pass near the route but extend far
+ * away are cut — only the junction portion is kept.
+ */
+function trimRoadsToRoute(
+  roads: any[],
+  mainRouteCoords: [number, number][],
+  thresholdMeters = 100,
+): any[] {
+  if (!mainRouteCoords || mainRouteCoords.length < 2) return roads;
+
+  const result: any[] = [];
+
+  for (const road of roads) {
+    const coords: [number, number][] = road.geometry.coordinates;
+
+    // Mark each point as near (true) or far (false)
+    const near = coords.map(([lon, lat]) => {
+      const d = minDistToPolyline(lon, lat, mainRouteCoords);
+      return d <= thresholdMeters;
+    });
+
+    // Split into contiguous runs of near=true points
+    let i = 0;
+    while (i < coords.length) {
+      // Skip far points
+      if (!near[i]) {
+        i++;
+        continue;
+      }
+
+      // Collect a contiguous run of near points
+      const segment: [number, number][] = [];
+      while (i < coords.length && near[i]) {
+        segment.push(coords[i]);
+        i++;
+      }
+
+      // Need at least 2 points to draw a line
+      if (segment.length >= 2) {
+        result.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: segment },
+          properties: {},
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+function highwayToWidth(highway: string): number {
+  // console.log(highway);
+  switch (highway) {
+    case "motorway":
+    case "trunk":
+      return 6;
+    case "primary":
+      return 6;
+    case "secondary":
+      return 4;
+    case "tertiary":
+      return 4;
+    case "residential":
+    case "unclassified":
+      return 6;
+    case "service":
+    case "footway":
+    case "path":
+      return 2;
+    default:
+      return 4;
+  }
+}
+
 export {
   filterRoadsNearRoute,
   getCurrentLocation,
   haversineMeters,
-  minDistToPolyline
+  highwayToWidth,
+  minDistToPolyline,
+  trimRoadsToRoute
 };
 

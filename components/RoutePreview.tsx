@@ -1,7 +1,7 @@
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import useLocationStore, { Coords } from "@/stores/locationStore";
 import { writeCoordsPackets, writeStreamPackets } from "@/utils/ble";
-import { filterRoadsNearRoute } from "@/utils/location";
+import { highwayToWidth, trimRoadsToRoute } from "@/utils/location";
 import {
   Camera,
   CircleLayer,
@@ -399,18 +399,20 @@ out geom;
             type: "LineString",
             coordinates: el.geometry.map((p: any) => [p.lon, p.lat]),
           },
-          properties: {},
+          properties: {
+            highway: el.tags?.highway ?? "residential", // ← add this
+          },
         }));
 
       // ── KEY CHANGE: only keep roads adjacent to the main route ──
-      const filtered = filterRoadsNearRoute(allFeatures, mainRouteCoords, 80);
+      const filtered = trimRoadsToRoute(allFeatures, mainRouteCoords, 200);
       console.log(
         `Secondary roads: ${allFeatures.length} fetched → ${filtered.length} kept`,
       );
 
       setSecondaryRoadsGeoJSON({
         type: "FeatureCollection",
-        features: allFeatures,
+        features: filtered,
       });
     } catch (error) {
       console.log("Error fetching secondary roads:", error);
@@ -419,9 +421,10 @@ out geom;
 
   function getSecondaryRoadCoords() {
     if (!secondaryRoadsGeoJSON) return [];
-    return secondaryRoadsGeoJSON.features.map(
-      (f: any) => f.geometry.coordinates,
-    );
+    return secondaryRoadsGeoJSON.features.map((f: any) => ({
+      coords: f.geometry.coordinates,
+      highway: f.properties?.highway ?? "residential",
+    }));
   }
 
   function packSecondaryRoads(
@@ -437,17 +440,16 @@ out geom;
     const arr: number[] = [];
 
     roadsRaw.forEach((road) => {
-      road.forEach((pt: any, i: number) => {
-        const lon = pt.lon !== undefined ? pt.lon : pt[0];
-        const lat = pt.lat !== undefined ? pt.lat : pt[1];
-        if (lon === undefined || lat === undefined) return;
-
+      const width = highwayToWidth(road.highway ?? "residential");
+      road.coords.forEach((pt: any, i: number) => {
+        const lon = pt[0],
+          lat = pt[1];
         const dx = (lon - originLon) * metersPerDegLon;
         const dy = (lat - originLat) * metersPerDegLat;
         const x = Math.round(dx * scale);
         const y = Math.round(-dy * scale);
 
-        arr.push(i === 0 ? 0 : 1);
+        arr.push(i === 0 ? width : 255); // width on moveTo, 255 = lineTo
         arr.push(x & 0xff);
         arr.push((x >> 8) & 0xff);
         arr.push(y & 0xff);
