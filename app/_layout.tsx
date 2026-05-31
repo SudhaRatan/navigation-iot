@@ -2,7 +2,7 @@ import { ThemedText } from "@/components/themed-text";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import useDeviceStore from "@/stores/deviceStore";
-import { disconnectDevice, scanDevices } from "@/utils/ble";
+import { disconnectDevice } from "@/utils/ble";
 import {
   DarkTheme,
   DefaultTheme,
@@ -11,7 +11,6 @@ import {
 import { router, Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { TouchableOpacity } from "react-native";
-import { Device } from "react-native-ble-plx";
 import "react-native-reanimated";
 import { useShallow } from "zustand/react/shallow";
 
@@ -37,7 +36,7 @@ export default function RootLayout() {
                     if (device) {
                       disconnectDevice(device, setDevice);
                     } else {
-                      scanDevices().then((device: Device) => setDevice(device));
+                      // scanDevices().then((device: Device) => setDevice(device));
                     }
                   }}
                 >

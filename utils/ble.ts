@@ -3,8 +3,8 @@ import * as ExpoDevice from "expo-device";
 import { PermissionsAndroid, Platform } from "react-native";
 import { BleManager, Device } from "react-native-ble-plx";
 
-const SERVICE_UUID = process.env.EXPO_PUBLIC_Service_UUID;
-const CHARACTERISTIC_UUID = process.env.EXPO_PUBLIC_CHARACTERISTIC_UUID;
+let SERVICE_UUID: string = "";
+let CHARACTERISTIC_UUID: string = "";
 
 const requestAndroid31Permissions = async () => {
   const bluetoothScanPermission = await PermissionsAndroid.request(
@@ -68,27 +68,40 @@ const requestPermissions = async () => {
 
 const manager = new BleManager();
 
-async function scanDevices(): Promise<Device> {
+async function scanDevices(
+  serviceUUID: string,
+  characteristicUUID: string,
+): Promise<Device> {
   console.log("Scanning devices");
   return new Promise((res, rej) => {
     try {
-      manager.startDeviceScan(null, null, async (error, device) => {
-        if (error) {
-          console.log("SCAN ERROR", error);
-          return;
-        }
+      let deviceFound = false;
+      manager.startDeviceScan(
+        null,
+        { allowDuplicates: false },
+        async (error, device) => {
+          if (error) {
+            console.log("SCAN ERROR", error);
+            return;
+          }
 
-        if (!device) return;
+          if (deviceFound) return; // prevent multiple discoveries
 
-        if (
-          device.name === "MyESP32" ||
-          device.serviceUUIDs?.includes(SERVICE_UUID!)
-        ) {
-          console.log("Found device: ", device);
-          stopScan();
-          res(await connectToDevice(device)); // send device back to UI
-        }
-      });
+          if (!device) return;
+
+          if (
+            device.name === "MyESP32" ||
+            device.serviceUUIDs?.includes(serviceUUID)
+          ) {
+            console.log("Found device: ", device);
+            deviceFound = true;
+            stopScan();
+            SERVICE_UUID = serviceUUID;
+            CHARACTERISTIC_UUID = characteristicUUID;
+            res(await connectToDevice(device)); // send device back to UI
+          }
+        },
+      );
     } catch (error) {
       rej(error);
     }
