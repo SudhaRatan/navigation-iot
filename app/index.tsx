@@ -11,7 +11,7 @@ import Constants from "expo-constants";
 import * as Location from "expo-location";
 import React, { useEffect, useState } from "react";
 import { TouchableOpacity } from "react-native";
-import { Device } from "react-native-ble-plx";
+import { BleManager, Device } from "react-native-ble-plx";
 import { useShallow } from "zustand/react/shallow";
 
 export default function Index() {
@@ -37,6 +37,23 @@ export default function Index() {
       subscription?.remove(); // Clean up on unmount
     };
   }, []);
+
+  useEffect(() => {
+    let stopListener: any = null;
+    if (device) {
+      stopListener = new BleManager().onDeviceDisconnected(
+        device.id,
+        (arg: any) => {
+          console.log("device disconnected", arg);
+          setDevice(null);
+        },
+      );
+    }
+
+    return () => {
+      stopListener?.remove();
+    };
+  }, [device, setDevice]);
 
   return (
     <ThemedView style={{ flex: 1 }}>
